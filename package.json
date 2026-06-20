@@ -1,7 +1,7 @@
 {
-  "name": "@tdreyno/abac",
+  "name": "@tdreyno/rules",
   "version": "0.1.0",
-  "description": "Constructor-only ReBAC-first authorization library",
+  "description": "Functional auth rules for JavaScript and TypeScript applications.",
   "publishConfig": {
     "access": "public"
   },
@@ -10,9 +10,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "src",
-    "CHANGELOG.md"
+    "dist"
   ],
   "scripts": {
     "clean": "rm -rf dist",

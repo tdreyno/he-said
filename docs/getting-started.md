@@ -1,11 +1,11 @@
 # Getting Started
 
-ABAC is a small TypeScript library for expressing authorization as composable logic rules.
+Rules is a small TypeScript library for expressing authorization as composable logic rules.
 
 ## Install
 
 ```bash
-npm install @tdreyno/abac
+npm install @tdreyno/rules
 ```
 
 ## First Rule
@@ -15,9 +15,12 @@ import {
   and,
   createInMemoryAdapter,
   evaluator,
+  is,
+  oneOf,
+  or,
   relation,
   term,
-} from "@tdreyno/abac"
+} from "@tdreyno/rules"
 
 type User = { id: string; suspended: boolean }
 type Document = { id: string }
@@ -51,7 +54,11 @@ const allowed = await engine.evaluate(canEdit, {
 
 1. Create typed terms with term().
 2. Define reusable relations with relation().
-3. Build a rule tree with and, or, not, eq, is, forAll, select, distinct, and memo.
+3. Build a rule tree with composable operators:
+   - Logic: and, or, not, implies
+   - Helpers: oneOf, atLeast, atMost, exactly
+   - Equality and predicates: eq, is
+   - Advanced: forAll, select, distinct, letRule, ref
 4. Choose an evaluator adapter.
 5. Call evaluate or evaluateWithProof.
 

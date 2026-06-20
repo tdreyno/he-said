@@ -1,6 +1,6 @@
 # Type Safety and Terms
 
-ABAC is designed around strongly typed terms and relation signatures.
+Rules is designed around strongly typed terms and relation signatures.
 
 ## Why Terms Are Symbols
 
@@ -14,15 +14,15 @@ Benefits:
 
 ## Predicates with is
 
-is(termValue, predicate) creates a derived term with additional unary filtering.
+termValue.is(predicate) creates a derived term with additional unary filtering.
 
 ```ts
-import { is, term } from "@tdreyno/abac"
+import { term } from "@tdreyno/rules"
 
 type User = { id: string; suspended: boolean }
 
 const user = term<User>()
-const activeUser = is(user, candidate => !candidate.suspended)
+const activeUser = user.is(candidate => !candidate.suspended)
 ```
 
 Derived terms can be reused in relation and equality expressions.

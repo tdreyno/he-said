@@ -2,22 +2,27 @@
 
 ## Exports
 
-ABAC exports algebra constructors, an in-memory adapter, and related types.
+Rules exports algebra constructors, an in-memory adapter, and related types.
 
 ### Algebra Constructors
 
 - term<T>()
+- term<T>().is(predicate)
 - relation<Left, Right>()
-- is(term, predicate)
 - eq(leftTerm, rightTermOrValue)
 - ref(name)
 - and(...constraints)
 - or(...constraints)
 - not(constraint)
+- implies(premise, consequence)
+- oneOf(term, values)
+- atLeast(count, ...constraints)
+- atMost(count, ...constraints)
+- exactly(count, ...constraints)
 - forAll(term, constraint)
 - select(...terms)(constraint)
 - distinct(constraint)
-- memo(name, constraint)
+- letRule(name, constraint)
 
 ### Evaluator Construction
 
@@ -55,12 +60,20 @@ InMemoryAdapterOptions:
 
 - Rule trees are immutable plain objects.
 - and and or flatten nested nodes of the same kind.
-- ref and memo names must be non-empty after trim.
+- oneOf(term, values) is equivalent to or(eq(term, v1), eq(term, v2), ...).
+- cardinality helpers count satisfied constraints:
+  - atLeast(n, ...rules)
+  - atMost(n, ...rules)
+  - exactly(n, ...rules)
+- ref and letRule names must be non-empty after trim.
 
 ## Error Conditions
 
 - unknown term used in rule expression
 - ref name is required
-- memo name is required
+- letRule name is required
+- atLeast requires a non-negative integer count
+- atMost requires a non-negative integer count
+- exactly requires a non-negative integer count
 - unknown ref during evaluation/validation
 - recursive or non-stratified negative dependencies

@@ -1,13 +1,13 @@
 # In-Memory Evaluation
 
-ABAC ships an in-memory adapter for local authorization checks and testing.
+Rules ships an in-memory adapter for local authorization checks and testing.
 
 ## createInMemoryAdapter
 
 createInMemoryAdapter takes relation facts and an optional global domain:
 
 ```ts
-import { createInMemoryAdapter } from "@tdreyno/abac"
+import { createInMemoryAdapter } from "@tdreyno/rules"
 
 const adapter = createInMemoryAdapter({
   relations: [
@@ -26,7 +26,7 @@ const adapter = createInMemoryAdapter({
 ## Building an Evaluator
 
 ```ts
-import { evaluator } from "@tdreyno/abac"
+import { evaluator } from "@tdreyno/rules"
 
 const engine = evaluator(adapter, {
   evaluatorContext: undefined,
@@ -38,7 +38,7 @@ const proof = await engine.evaluateWithProof(rule, environment)
 
 ## Stratified Negation Validation
 
-The in-memory adapter validates ref and memo graphs before evaluation:
+The in-memory adapter validates ref and letRule graphs before evaluation:
 
 - unknown refs throw an error.
 - recursive references throw an error.

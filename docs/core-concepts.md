@@ -1,6 +1,6 @@
 # Core Concepts
 
-ABAC models authorization as rule algebra over typed terms.
+Rules models authorization as rule algebra over typed terms.
 
 ## Terms
 
@@ -8,7 +8,7 @@ Use term() to create symbolic variables that participate in rules.
 
 - Terms are symbols, not runtime strings.
 - Type information flows through each term.
-- Derived terms created with is(...) keep the same root term and add predicate filters.
+- Derived terms created with term.is(...) keep the same root term and add predicate filters.
 
 ## Relations
 
@@ -19,16 +19,21 @@ Use relation<Left, Right>() to define graph edges between typed terms.
 
 ## Rule Composition
 
-ABAC supports logical and structural operators:
+Rules supports logical and structural operators:
 
 - and(...constraints)
 - or(...constraints)
 - not(constraint)
+- implies(premise, consequence)
 - eq(term, termOrValue)
+- oneOf(term, values)
+- atLeast(count, ...constraints)
+- atMost(count, ...constraints)
+- exactly(count, ...constraints)
 - forAll(term, constraint)
 - select(...terms)(constraint)
 - distinct(constraint)
-- memo(name, constraint)
+- letRule(name, constraint)
 - ref(name)
 
 These operators produce plain rule trees that adapters evaluate.

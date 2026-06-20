@@ -1,8 +1,8 @@
 # F.A.Q.
 
-## Is this policy engine ABAC-only?
+## Is this policy engine RBAC-only?
 
-It is rule-algebra based. You can express ABAC, ReBAC-style checks, and mixed constraints.
+It is rule-algebra based. You can express RBAC, ABAC (ability-based access control), ReBAC-style checks, and mixed constraints.
 
 ## Why are terms symbols instead of strings?
 

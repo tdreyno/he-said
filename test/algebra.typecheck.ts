@@ -3,8 +3,8 @@ import {
   eq,
   evaluator,
   forAll,
-  is,
-  memo,
+  implies,
+  letRule,
   ref,
   relation,
   term,
@@ -24,7 +24,7 @@ const tenant = term<string>()
 
 const memberOf = relation<User, Team>()
 
-const activeViewer = is(viewer, (value, env: Env) => {
+const activeViewer = viewer.is((value, env: Env) => {
   return !value.suspended && typeof env.tenant === "string"
 })
 
@@ -45,7 +45,8 @@ const baseRule = algebra.and(
 )
 
 forAll(team, baseRule)
-memo("tenant-rule", baseRule)
+implies(baseRule, team)
+letRule("tenant-rule", baseRule)
 ref("tenant-rule")
 
 const adapter = {

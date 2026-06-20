@@ -230,7 +230,7 @@ const collectDefinitions = (rule: Rule): Map<string, Rule> => {
       case "memo": {
         const existing = definitions.get(node.name)
         if (existing && existing !== node.child) {
-          throw new Error(`duplicate memo definition for "${node.name}"`)
+          throw new Error(`duplicate letRule definition for "${node.name}"`)
         }
 
         definitions.set(node.name, node.child)

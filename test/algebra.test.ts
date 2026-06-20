@@ -1,16 +1,21 @@
 import {
+  atLeast,
+  atMost,
   algebra,
   createInMemoryAdapter,
   distinct,
   eq,
+  exactly,
   evaluator,
   forAll,
-  is,
-  memo,
+  implies,
+  letRule,
+  oneOf,
   ref,
   relation,
   select,
   term,
+  through,
   validateStratifiedNegation,
 } from "../src"
 
@@ -31,9 +36,8 @@ describe("algebra api", () => {
     const membershipBelongsToTeam = relation<Membership, Team>()
     const teamOwnsDocument = relation<Team, Document>()
 
-    const activeViewer = is(viewer, v => !v.suspended)
-    const readableDocument = is(
-      document,
+    const activeViewer = viewer.is(v => !v.suspended).is(v => v.id.length > 0)
+    const readableDocument = document.is(
       (d, env) => !d.archived || env[allowArchivedReads] === true,
     )
 
@@ -107,10 +111,10 @@ describe("algebra api", () => {
     expect(allowedArchived).toBe(true)
   })
 
-  it("throws when memo name is blank", () => {
+  it("throws when letRule name is blank", () => {
     const value = term<string>()
 
-    expect(() => memo("   ", value)).toThrow("memo name is required")
+    expect(() => letRule("   ", value)).toThrow("letRule name is required")
   })
 
   it("supports forAll and vacuous truth", async () => {
@@ -180,7 +184,166 @@ describe("algebra api", () => {
     ).resolves.toBe(true)
   })
 
-  it("handles select, distinct, memo, and eq in execution", async () => {
+  it("supports logical implication", async () => {
+    const a = term<boolean>()
+    const b = term<boolean>()
+    const adapter = createInMemoryAdapter({
+      relations: [],
+      domain: [],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+    const rule = implies(eq(a, true), eq(b, true))
+
+    await expect(
+      instance.evaluate(rule, {
+        [a]: false,
+        [b]: false,
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [a]: false,
+        [b]: true,
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [a]: true,
+        [b]: true,
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [a]: true,
+        [b]: false,
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("supports oneOf membership checks", async () => {
+    const action = term<string>()
+    const adapter = createInMemoryAdapter({
+      relations: [],
+      domain: [],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const canReadLike = oneOf(action, ["read", "export"])
+
+    await expect(
+      instance.evaluate(canReadLike, {
+        [action]: "read",
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(canReadLike, {
+        [action]: "export",
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(canReadLike, {
+        [action]: "delete",
+      }),
+    ).resolves.toBe(false)
+
+    const emptyMembership = oneOf(action, [])
+    await expect(
+      instance.evaluate(emptyMembership, {
+        [action]: "read",
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("supports cardinality helpers", async () => {
+    const a = term<boolean>()
+    const b = term<boolean>()
+    const c = term<boolean>()
+    const adapter = createInMemoryAdapter({
+      relations: [],
+      domain: [],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const aTrue = eq(a, true)
+    const bTrue = eq(b, true)
+    const cTrue = eq(c, true)
+
+    const atLeastTwo = atLeast(2, aTrue, bTrue, cTrue)
+    const atMostOne = atMost(1, aTrue, bTrue, cTrue)
+    const exactlyTwo = exactly(2, aTrue, bTrue, cTrue)
+
+    await expect(
+      instance.evaluate(atLeastTwo, {
+        [a]: true,
+        [b]: true,
+        [c]: false,
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      instance.evaluate(atLeastTwo, {
+        [a]: true,
+        [b]: false,
+        [c]: false,
+      }),
+    ).resolves.toBe(false)
+
+    await expect(
+      instance.evaluate(atMostOne, {
+        [a]: true,
+        [b]: false,
+        [c]: false,
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      instance.evaluate(atMostOne, {
+        [a]: true,
+        [b]: true,
+        [c]: false,
+      }),
+    ).resolves.toBe(false)
+
+    await expect(
+      instance.evaluate(exactlyTwo, {
+        [a]: true,
+        [b]: true,
+        [c]: false,
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      instance.evaluate(exactlyTwo, {
+        [a]: true,
+        [b]: true,
+        [c]: true,
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("validates cardinality helper count inputs", () => {
+    const value = term<boolean>()
+
+    expect(() => atLeast(-1, value)).toThrow(
+      "atLeast requires a non-negative integer count",
+    )
+    expect(() => atMost(1.5, value)).toThrow(
+      "atMost requires a non-negative integer count",
+    )
+    expect(() => exactly(NaN, value)).toThrow(
+      "exactly requires a non-negative integer count",
+    )
+  })
+
+  it("handles select, distinct, letRule, and eq in execution", async () => {
     const viewer = term<User>()
     const team = term<Team>()
     const membership = term<Membership>()
@@ -223,7 +386,7 @@ describe("algebra api", () => {
       userHasMembership(viewer, membership),
       membershipBelongsToTeam(membership, team),
       eq(team, canonicalTeam),
-      memo("subgraph", select(viewer, team)(team)),
+      letRule("subgraph", select(viewer, team)(team)),
     )
 
     const rule = distinct(duplicated)
@@ -261,18 +424,70 @@ describe("algebra api", () => {
     ).toBeGreaterThan(0)
   })
 
+  it("supports fluent through builder", async () => {
+    type AclEntry = { id: string }
+    type User = { id: string }
+    type Document = { id: string }
+    type Permission = "read" | "write"
+
+    const aclEntry = term<AclEntry>()
+    const user = term<User>()
+    const document = term<Document>()
+    const permission = term<Permission>()
+
+    const aclEntryUser = relation<AclEntry, User>()
+    const aclEntryDocument = relation<AclEntry, Document>()
+    const aclEntryPermission = relation<AclEntry, Permission>()
+
+    const canRead = permission.is(p => p === "read" || p === "write")
+
+    const e1 = { id: "acl-1" } satisfies AclEntry
+    const u1 = { id: "user-1" } satisfies User
+    const d1 = { id: "doc-1" } satisfies Document
+    const perm1 = "read" satisfies Permission
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: aclEntryUser, pairs: [[e1, u1]] },
+        { relation: aclEntryDocument, pairs: [[e1, d1]] },
+        { relation: aclEntryPermission, pairs: [[e1, perm1]] },
+      ],
+      domain: [e1, u1, d1],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const rule = through(aclEntry)
+      .to(aclEntryUser, user)
+      .to(aclEntryDocument, document)
+      .to(aclEntryPermission, canRead)
+
+    expect(rule.type).toBe("and")
+    expect((rule as { children: unknown[] }).children.length).toBe(3)
+
+    await expect(
+      instance.evaluate(rule, {
+        [aclEntry]: e1,
+        [user]: u1,
+        [document]: d1,
+        [permission]: perm1,
+      }),
+    ).resolves.toBe(true)
+  })
+
   it("validates stratified negation", () => {
     const value = term<string>()
     const rule = algebra.not(value)
 
     expect(() => validateStratifiedNegation(rule)).not.toThrow()
 
-    const recursivePositive = memo("loop", ref("loop"))
+    const recursivePositive = letRule("loop", ref("loop"))
     expect(() => validateStratifiedNegation(recursivePositive)).toThrow(
       "recursive rule references are not supported yet",
     )
 
-    const recursiveNegative = memo("neg-loop", algebra.not(ref("neg-loop")))
+    const recursiveNegative = letRule("neg-loop", algebra.not(ref("neg-loop")))
     expect(() => validateStratifiedNegation(recursiveNegative)).toThrow(
       "non-stratified negation",
     )

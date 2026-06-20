@@ -4,6 +4,9 @@ export type Environment = Record<PropertyKey, unknown>
 
 export type Term<T> = symbol & {
   readonly __termBrand?: T
+  is<Env extends Environment = Environment>(
+    predicate: UnaryPredicate<T, Env>,
+  ): Term<T>
 }
 
 export type UnaryPredicate<T, Env extends Environment = Environment> = (
@@ -20,6 +23,58 @@ type TermMetadata = {
 }
 
 const termMetadata = new Map<AnyTerm, TermMetadata>()
+
+const createDerivedTerm = <T, Env extends Environment = Environment>(
+  value: Term<T>,
+  predicate: UnaryPredicate<T, Env>,
+): Term<T> => {
+  const source = normalizeTerm(value)
+  const derived = Symbol("rules.term.derived") as Term<T>
+
+  termMetadata.set(derived as AnyTerm, {
+    root: source.root as AnyTerm,
+    predicates: [
+      ...(source.predicates as Array<AnyUnaryPredicate>),
+      predicate as AnyUnaryPredicate,
+    ],
+  })
+
+  return derived
+}
+
+const termIs = function <T, Env extends Environment = Environment>(
+  this: symbol,
+  predicate: UnaryPredicate<T, Env>,
+): Term<T> {
+  if (!isKnownTerm(this)) {
+    throw new Error("unknown term used in rule expression")
+  }
+
+  return createDerivedTerm(this as Term<T>, predicate)
+}
+
+const installTermIsMethod = (): void => {
+  const symbolPrototype = Symbol.prototype as symbol & {
+    is?: unknown
+  }
+
+  if (symbolPrototype.is === undefined) {
+    Object.defineProperty(symbolPrototype, "is", {
+      value: termIs,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+
+    return
+  }
+
+  if (symbolPrototype.is !== termIs) {
+    throw new Error("Symbol.prototype.is is already defined")
+  }
+}
+
+installTermIsMethod()
 
 const registerBaseTerm = <T>(value: Term<T>): void => {
   termMetadata.set(value as AnyTerm, {
@@ -225,31 +280,13 @@ export interface MemoNode {
 }
 
 export const term = <T>(): Term<T> => {
-  const value = Symbol("abac.term") as Term<T>
+  const value = Symbol("rules.term") as Term<T>
   registerBaseTerm(value)
   return value
 }
 
-export const is = <T, Env extends Environment = Environment>(
-  value: Term<T>,
-  predicate: UnaryPredicate<T, Env>,
-): Term<T> => {
-  const source = normalizeTerm(value)
-  const derived = Symbol("abac.term.derived") as Term<T>
-
-  termMetadata.set(derived as AnyTerm, {
-    root: source.root as AnyTerm,
-    predicates: [
-      ...(source.predicates as Array<AnyUnaryPredicate>),
-      predicate as AnyUnaryPredicate,
-    ],
-  })
-
-  return derived
-}
-
 export const relation = <Left, Right>(): Relation<Left, Right> => {
-  const relationId = Symbol("abac.relation")
+  const relationId = Symbol("rules.relation")
 
   const relationFn = ((left: Term<Left>, right: Term<Right>): Rule => {
     const normalizedLeft = normalizeTerm(left)
@@ -345,6 +382,132 @@ export const not = (constraint: ConstraintInput): Rule => {
   }
 }
 
+export const implies = (
+  premise: ConstraintInput,
+  consequence: ConstraintInput,
+): Rule => {
+  return {
+    type: "or",
+    children: flattenByType("or", [
+      {
+        type: "not",
+        child: toRule(premise),
+      },
+      toRule(consequence),
+    ]),
+  }
+}
+
+const combinations = <T>(
+  values: ReadonlyArray<T>,
+  size: number,
+): Array<Array<T>> => {
+  if (size === 0) {
+    return [[]]
+  }
+
+  if (size > values.length) {
+    return []
+  }
+
+  return values.flatMap((value, index) => {
+    return combinations(values.slice(index + 1), size - 1).map(rest => {
+      return [value, ...rest]
+    })
+  })
+}
+
+const normalizeCount = (value: number, name: string): number => {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} requires a non-negative integer count`)
+  }
+
+  return value
+}
+
+export const oneOf = <T>(value: Term<T>, values: ReadonlyArray<T>): Rule => {
+  return or(...values.map(option => eq(value, option)))
+}
+
+export const atLeast = (
+  count: number,
+  ...constraints: Array<ConstraintInput>
+): Rule => {
+  const normalizedCount = normalizeCount(count, "atLeast")
+  const rules = constraints.map(toRule)
+
+  if (normalizedCount === 0) {
+    return and()
+  }
+
+  if (normalizedCount > rules.length) {
+    return or()
+  }
+
+  return or(
+    ...combinations(rules, normalizedCount).map(group => {
+      return and(...group)
+    }),
+  )
+}
+
+export const atMost = (
+  count: number,
+  ...constraints: Array<ConstraintInput>
+): Rule => {
+  const normalizedCount = normalizeCount(count, "atMost")
+  const rules = constraints.map(toRule)
+
+  if (normalizedCount >= rules.length) {
+    return and()
+  }
+
+  if (normalizedCount === 0) {
+    return and(...rules.map(rule => not(rule)))
+  }
+
+  return and(
+    ...combinations(rules, normalizedCount + 1).map(group => {
+      return not(and(...group))
+    }),
+  )
+}
+
+export const exactly = (
+  count: number,
+  ...constraints: Array<ConstraintInput>
+): Rule => {
+  const normalizedCount = normalizeCount(count, "exactly")
+
+  return and(
+    atLeast(normalizedCount, ...constraints),
+    atMost(normalizedCount, ...constraints),
+  )
+}
+
+export const through = <Left>(term: Term<Left>) => {
+  type Builder = Rule & {
+    to: <Right>(relation: Relation<Left, Right>, right: Term<Right>) => Builder
+  }
+
+  const create = (children: Rule[]): Builder => {
+    const builder: Builder = Object.assign(
+      {
+        type: "and",
+        children,
+      } as unknown as Rule,
+      {
+        to: <Right>(relation: Relation<Left, Right>, right: Term<Right>) =>
+          create([...children, relation(term, right)]),
+      },
+    ) as Builder
+
+    return builder
+  }
+
+  return create([])
+}
+
 export const forAll = <T>(
   value: Term<T>,
   constraint: ConstraintInput,
@@ -375,9 +538,9 @@ export const distinct = (constraint: ConstraintInput): Rule => {
   }
 }
 
-export const memo = (name: string, constraint: ConstraintInput): Rule => {
+export const letRule = (name: string, constraint: ConstraintInput): Rule => {
   if (name.trim().length === 0) {
-    throw new Error("memo name is required")
+    throw new Error("letRule name is required")
   }
 
   return {

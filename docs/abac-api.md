@@ -96,17 +96,6 @@ const result = await authz.can(READ, {
 })
 ```
 
-### `authz.canBatch(...requests)`
-
-Evaluate decisions in batch (variadic requests).
-
-```ts
-const results = await authz.canBatch(
-  { action: READ, user, resource, environment },
-  { action: UPDATE, user, resource, environment },
-)
-```
-
 ### `authz.policy()`
 
 Return the policy used by the enforcer.
@@ -165,7 +154,6 @@ Main exported types:
 - `RuleRef`
 - `PolicyRef`
 - `CanContext`
-- `CanRequest`
 - `CanDecision`
 - `DecisionTrace`
 - `RuleTrace`

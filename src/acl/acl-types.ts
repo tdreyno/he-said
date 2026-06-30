@@ -4,6 +4,14 @@ export type ActionToken<TLabel extends string = string> = symbol & {
   readonly __actionBrand?: { label: TLabel }
 }
 
+export type SubjectToken<TLabel extends string = string> = symbol & {
+  readonly __subjectBrand?: { label: TLabel }
+}
+
+export type ResourceToken<TLabel extends string = string> = symbol & {
+  readonly __resourceBrand?: { label: TLabel }
+}
+
 export type FailureToken = OutcomeToken & {
   readonly __failureBrand?: { message?: string }
 }
@@ -12,7 +20,7 @@ export type RuleReferenceToken = symbol & {
   readonly __ruleReferenceBrand?: true
 }
 
-export type RuleKind = "approve" | "deny"
+export type RuleKind = "allow" | "deny"
 
 export interface RuleOptions {
   readonly name?: string
@@ -33,10 +41,10 @@ export interface PolicyRef {
   readonly rules: readonly RuleRef[]
 }
 
-export interface CanContext<User, Resource, Environment> {
-  readonly user: User
+export interface CanContext<Subject, Resource, Environment> {
+  readonly subject: Subject
   readonly resource: Resource
-  readonly environment: Environment
+  readonly environment?: Environment
 }
 
 export interface RuleTrace {
@@ -59,10 +67,10 @@ export interface CanDecision {
   readonly trace: DecisionTrace
 }
 
-export interface ABACEnforcer<User, Resource, Environment> {
+export interface ACLEnforcer<Subject, Resource, Environment> {
   can(
     action: ActionToken,
-    context: CanContext<User, Resource, Environment>,
+    context: CanContext<Subject, Resource, Environment>,
   ): Promise<CanDecision>
   policy(): PolicyRef
 }

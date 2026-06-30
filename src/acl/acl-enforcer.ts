@@ -7,17 +7,17 @@ import { createInMemoryAdapter } from "../core/algebra-inmemory"
 import {
   buildEvalEnvironment,
   failureMessage,
-  type EvalContext,
-} from "./abac-builder"
+  fromContext,
+} from "./acl-builder"
 import type {
-  ABACEnforcer,
+  ACLEnforcer,
   ActionToken,
   CanContext,
   CanDecision,
   PolicyRef,
   RuleRef,
   RuleTrace,
-} from "./abac-types"
+} from "./acl-types"
 
 const proofToTrace = (
   rule: RuleRef,
@@ -33,33 +33,28 @@ const proofToTrace = (
   }
 }
 
-export const enforcer = <User, Resource, Environment>(
+export const enforcer = <Subject, Resource, Environment>(
   accessPolicy: PolicyRef,
-): ABACEnforcer<User, Resource, Environment> => {
+): ACLEnforcer<Subject, Resource, Environment> => {
   const evalEngine = evaluator(createInMemoryAdapter({ relations: [] }), {
     evaluatorContext: undefined,
   })
 
   const orderedRules = sortRulesByPriorityAndKind(accessPolicy.rules, [
     "deny",
-    "approve",
+    "allow",
   ])
 
   const denyRules = orderedRules.filter(rule => rule.kind === "deny")
-  const approveRules = orderedRules.filter(rule => rule.kind === "approve")
+  const allowRules = orderedRules.filter(rule => rule.kind === "allow")
 
   const can = async (
-    action: ActionToken,
-    context: CanContext<User, Resource, Environment>,
+    actionToken: ActionToken,
+    context: CanContext<Subject, Resource, Environment>,
   ): Promise<CanDecision> => {
-    const evalContext: EvalContext<User, Resource, Environment> = {
-      action,
-      user: context.user,
-      resource: context.resource,
-      environment: context.environment,
-    }
-
+    const evalContext = fromContext(actionToken, context)
     const evalEnvironment = buildEvalEnvironment(evalContext)
+
     const checkedRules: RuleTrace[] = []
     const matchedRules: RuleTrace[] = []
 
@@ -86,7 +81,7 @@ export const enforcer = <User, Resource, Environment>(
       }
     }
 
-    for (const rule of approveRules) {
+    for (const rule of allowRules) {
       const proof = await evalEngine.evaluateWithProof(
         rule.rule,
         evalEnvironment,

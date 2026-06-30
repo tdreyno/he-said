@@ -25,6 +25,10 @@
     "./abac": {
       "types": "./dist/abac/index.d.ts",
       "default": "./dist/abac/index.js"
+    },
+    "./acl": {
+      "types": "./dist/acl/index.d.ts",
+      "default": "./dist/acl/index.js"
     }
   },
   "files": [

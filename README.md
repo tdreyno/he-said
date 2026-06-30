@@ -174,6 +174,55 @@ await rbac.roles(editor.id).addPermission("archive", document)
 
 The RBAC package provides a fluent, method-based API perfect for role-based patterns. See the [RBAC Guide](docs/rbac-guide.md) and [API Reference](docs/rbac-api.md) for complete documentation.
 
+## ACL Package
+
+For explicit allow/deny style access control, use `@tdreyno/he-said/acl`:
+
+```typescript
+import {
+  action,
+  actionIs,
+  allow,
+  deny,
+  enforcer,
+  eq,
+  failure,
+  policy,
+} from "@tdreyno/he-said/acl"
+
+type User = { id: string; suspended: boolean }
+type Document = { id: string; ownerId: string }
+
+const READ = action("read")
+
+const denySuspended = deny(
+  eq((subject: User) => subject.suspended, true),
+  {
+    failure: failure("Suspended users cannot access documents."),
+    priority: 100,
+  },
+)
+
+const allowOwnerRead = allow([
+  actionIs(READ),
+  eq(
+    (subject: User) => subject.id,
+    (resource: Document) => resource.ownerId,
+  ),
+])
+
+const acl = enforcer(policy(denySuspended, allowOwnerRead))
+
+const can = await acl.can(READ, {
+  subject: user,
+  resource: document,
+})
+
+console.log(can.allowed)
+```
+
+The ACL package provides ACL-native allow/deny semantics with deterministic deny-first precedence and composable algebra-backed rules. See the [ACL Guide](docs/acl-guide.md) and [ACL API Reference](docs/acl-api.md) for full details.
+
 ## ABAC Package
 
 For attribute-based access control, use `@tdreyno/he-said/abac`:
@@ -253,6 +302,8 @@ The ABAC package provides a rule-focused API with action identity tokens, deny/a
 - [Type Safety and Terms](docs/type-safety-and-terms.md)
 - [RBAC Guide](docs/rbac-guide.md)
 - [RBAC API Reference](docs/rbac-api.md)
+- [ACL Guide](docs/acl-guide.md)
+- [ACL API Reference](docs/acl-api.md)
 - [ABAC Guide](docs/abac-guide.md)
 - [ABAC API Reference](docs/abac-api.md)
 - [RBAC Example](docs/rbac-implementation.md)

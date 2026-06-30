@@ -325,6 +325,28 @@ export const getRuleAnnotations = (rule: Rule): RuleAnnotations | undefined => {
   return ruleAnnotations.get(rule)
 }
 
+export const sortRulesByPriorityAndKind = <
+  TRule extends { kind: string; priority: number },
+>(
+  rules: ReadonlyArray<TRule>,
+  kindOrder: ReadonlyArray<TRule["kind"]>,
+): TRule[] => {
+  const kindPriority = new Map(
+    kindOrder.map((kind, index) => [kind, index] as const),
+  )
+
+  return [...rules].sort((left, right) => {
+    const priorityDiff = right.priority - left.priority
+    if (priorityDiff !== 0) {
+      return priorityDiff
+    }
+
+    const leftKind = kindPriority.get(left.kind) ?? Number.MAX_SAFE_INTEGER
+    const rightKind = kindPriority.get(right.kind) ?? Number.MAX_SAFE_INTEGER
+    return leftKind - rightKind
+  })
+}
+
 export interface TermInfo<T> {
   readonly root: Term<T>
   readonly predicates: Array<UnaryPredicate<T>>

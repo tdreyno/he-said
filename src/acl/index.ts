@@ -2,28 +2,35 @@ export {
   action,
   actionIn,
   actionIs,
-  all,
-  approve,
+  actionLabel,
+  allow,
+  buildEvalEnvironment,
   deny,
+  entry,
   eq,
-  eqEnv,
   failure,
   failureMessage,
-  ge,
+  fromContext,
   policy,
-} from "./abac-builder"
-export { enforcer } from "./abac-enforcer"
+  resource,
+  resourceLabel,
+  subject,
+  subjectLabel,
+} from "./acl-builder"
+export { enforcer } from "./acl-enforcer"
 export type {
-  ABACEnforcer,
+  ACLEnforcer,
   ActionToken,
   CanContext,
   CanDecision,
   DecisionTrace,
   FailureToken,
   PolicyRef,
+  ResourceToken,
   RuleKind,
   RuleOptions,
   RuleRef,
   RuleReferenceToken,
   RuleTrace,
-} from "./abac-types"
+  SubjectToken,
+} from "./acl-types"

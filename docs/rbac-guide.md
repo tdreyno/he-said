@@ -270,6 +270,55 @@ const policy = policy(
 await rbac.roles(manager.id).grant("bob")
 ```
 
+### Core-Algebra Fluent Guardrails
+
+For advanced scenarios, combine RBAC permission checks with a core algebra rule for contextual guardrails.
+
+```ts
+import {
+  createInMemoryAdapter,
+  and,
+  evaluator,
+  not,
+  or,
+  term,
+} from "@tdreyno/he-said"
+import { enforcer, policy, resource, role } from "@tdreyno/he-said/rbac"
+
+const document = resource<"document">()
+const editor = role().permission("write", document)
+const rbac = enforcer(policy([editor], []))
+
+await rbac.roles(editor.id).grant("alice")
+const baseDecision = await rbac.enforce("alice", document, "write")
+
+const request = term<{ network: "corp" | "public"; breakGlass: boolean }>()
+const baseAllowed = term<boolean>()
+
+const fromCorporateNetwork = request.is(value => value.network === "corp")
+const breakGlassDisabled = request.is(value => value.breakGlass === false)
+
+const guardedPolicy = and(
+  baseAllowed.is(allowed => allowed),
+  or(fromCorporateNetwork, not(breakGlassDisabled)),
+)
+
+const evalInstance = evaluator(createInMemoryAdapter({ relations: [] }), {
+  evaluatorContext: undefined,
+})
+
+const finalAllowed = await evalInstance.evaluate(guardedPolicy, {
+  [request]: { network: "corp", breakGlass: false },
+  [baseAllowed]: baseDecision.allowed,
+})
+```
+
+This pattern keeps RBAC as the primary permission model while using core algebra to express contextual controls in a composable way.
+
+Full runnable example:
+
+- `src/rbac/examples/example-core-algebra-fluent.ts`
+
 ### Workspace Scoping
 
 Use string IDs to scope roles to workspaces:

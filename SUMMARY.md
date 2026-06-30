@@ -8,6 +8,8 @@
 - [Implementing RBAC](docs/rbac-implementation.md)
 - [Implementing ACL](docs/acl-implementation.md)
 - [Implementing ABAC](docs/abac-implementation.md)
+- [ACL Guide](docs/acl-guide.md)
+- [ACL API](docs/acl-api.md)
 
 ## API
 

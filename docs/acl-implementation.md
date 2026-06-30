@@ -1,5 +1,8 @@
 # Implementing ACL
 
+This is the conceptual/core-algebra ACL implementation guide.
+For the dedicated ACL facade package, see [ACL Guide](./acl-guide.md) and [ACL API Reference](./acl-api.md).
+
 This guide shows a simple, real-world ACL model in he-said.
 
 Scenario:

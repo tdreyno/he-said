@@ -177,6 +177,66 @@ const denyAfterHours = deny(rule, {
 
 Higher priority evaluates first. Same priority ties are resolved with deny first.
 
+### 4. Core-Algebra Fluent Composition
+
+You can keep ABAC ergonomics and still compose rules with core algebra operators.
+
+```ts
+import { and, atLeast, not, or } from "@tdreyno/he-said"
+import {
+  action,
+  actionIs,
+  approve,
+  deny,
+  enforcer,
+  eq,
+  eqEnv,
+  ge,
+  policy,
+} from "@tdreyno/he-said/abac"
+
+const READ = action("read")
+
+const sameDepartment = eq(
+  (user: User) => user.department,
+  (resource: Document) => resource.department,
+)
+
+const isOwner = eq(
+  (user: User) => user.id,
+  (resource: Document) => resource.ownerId,
+)
+
+const sufficientClearance = ge(
+  (user: User) => user.clearance,
+  (resource: Document) => resource.sensitivity,
+)
+
+const duringBusinessHours = eqEnv(
+  (environment: Environment) => environment.isBusinessHours,
+  true,
+)
+
+const approveRead = approve(
+  and(
+    actionIs(READ),
+    not(eq((resource: Document) => resource.archived, true)),
+    duringBusinessHours,
+    or(
+      isOwner,
+      and(sameDepartment, sufficientClearance),
+      atLeast(2, sameDepartment, isOwner, sufficientClearance),
+    ),
+  ),
+)
+
+const authz = enforcer(policy(denySuspended, approveRead))
+```
+
+Full runnable example:
+
+- `src/abac/examples/example-core-algebra-fluent.ts`
+
 ## Decision and Trace
 
 A decision includes:

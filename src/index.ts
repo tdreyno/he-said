@@ -20,6 +20,7 @@ export {
   annotateRule,
   buildEvaluationProofDetails,
   getRuleAnnotations,
+  sortRulesByPriorityAndKind,
   getTermInfo,
   withExclusions,
   evaluator,

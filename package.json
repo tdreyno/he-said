@@ -47,6 +47,10 @@
     "postgres:test:down": "docker compose -f docker-compose.postgres.yml down --remove-orphans",
     "test": "jest --runInBand",
     "test:ci": "jest --runInBand --coverage",
+    "test:ci:sonar": "jest --runInBand --coverage --testPathIgnorePatterns src/core/algebra-postgres.integration.test.ts",
+    "coverage:sonar": "node scripts/prepare-sonar-coverage.mjs",
+    "sonar": "if [ -f ./.env ]; then set -a && . ./.env && set +a; fi && npm run test:ci:sonar && npm run coverage:sonar && npx sonar-scanner",
+    "sonar:quality-gate": "if [ -f ./.env ]; then set -a && . ./.env && set +a; fi && node scripts/sonar-quality-gate.mjs",
     "test:postgres": "jest --runInBand src/core/algebra-postgres.integration.test.ts",
     "test:postgres:ci": "npm run postgres:test:up && npm run test:postgres; npm run postgres:test:down",
     "test:types": "tsc -p tsconfig.types.json --noEmit",
@@ -73,6 +77,7 @@
     "lint-staged": "^16.2.6",
     "pg": "^8.16.3",
     "prettier": "^3.6.2",
+    "sonar-scanner": "^3.1.0",
     "ts-jest": "^29.2.5",
     "typescript": "^5.6.3"
   },

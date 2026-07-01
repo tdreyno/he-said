@@ -229,6 +229,66 @@ const applyFilterAlias = (sql: string, alias: string): string => {
   return sql.split("{{source}}").join(alias)
 }
 
+const staticFilterParamPattern = /\$([1-9][0-9]*)/g
+
+const parseStaticFilterParamIndexes = (sql: string): Array<number> => {
+  const output: Array<number> = []
+  let match = staticFilterParamPattern.exec(sql)
+  while (match) {
+    output.push(Number(match[1]))
+    match = staticFilterParamPattern.exec(sql)
+  }
+  staticFilterParamPattern.lastIndex = 0
+  return output
+}
+
+const bindStaticFilterSql = (
+  state: PlannerState,
+  filter: PostgresSourceFilter,
+  alias: string,
+): string => {
+  const aliasedSql = applyFilterAlias(filter.sql, quoteIdentifier(alias))
+  const referencedIndexes = parseStaticFilterParamIndexes(aliasedSql)
+  const paramCount = filter.params?.length ?? 0
+  const hasPlaceholders = referencedIndexes.length > 0
+
+  if (paramCount === 0) {
+    if (hasPlaceholders) {
+      throw new Error(
+        "postgres adapter staticFilters.sql uses positional parameters but no staticFilters.params were provided",
+      )
+    }
+    return aliasedSql
+  }
+
+  if (!hasPlaceholders) {
+    throw new Error(
+      "postgres adapter staticFilters.params were provided but staticFilters.sql has no positional parameters",
+    )
+  }
+
+  const highestReferenced = Math.max(...referencedIndexes)
+  if (highestReferenced !== paramCount) {
+    throw new Error(
+      "postgres adapter staticFilters.sql positional parameters must be contiguous and match staticFilters.params length",
+    )
+  }
+
+  const offset = state.params.length
+  const reboundSql = aliasedSql.replace(
+    staticFilterParamPattern,
+    (_token, index) => {
+      return `$${Number(index) + offset}`
+    },
+  )
+  staticFilterParamPattern.lastIndex = 0
+  filter.params?.forEach(value => {
+    nextParam(state, value)
+  })
+
+  return reboundSql
+}
+
 const findOrderingForColumn = (
   column: string,
   orderings?: ReadonlyArray<PostgresSourceOrdering>,
@@ -679,12 +739,7 @@ const appendStaticFilters = (
   filters?: ReadonlyArray<PostgresSourceFilter>,
 ): void => {
   filters?.forEach(filter => {
-    builder.whereClauses.push(
-      applyFilterAlias(filter.sql, quoteIdentifier(alias)),
-    )
-    filter.params?.forEach(value => {
-      nextParam(state, value)
-    })
+    builder.whereClauses.push(bindStaticFilterSql(state, filter, alias))
   })
 }
 

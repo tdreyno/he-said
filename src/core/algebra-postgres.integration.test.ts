@@ -46,6 +46,8 @@ describe("postgres algebra adapter integration", () => {
 
     await client.query(`
       DROP TABLE IF EXISTS documents;
+      DROP TABLE IF EXISTS files;
+      DROP TABLE IF EXISTS projects;
       DROP TABLE IF EXISTS team_documents;
       DROP TABLE IF EXISTS membership_teams;
       DROP TABLE IF EXISTS workspace_memberships;
@@ -60,7 +62,7 @@ describe("postgres algebra adapter integration", () => {
 
       CREATE TABLE membership_teams (
         membership_id text NOT NULL,
-        team_id text NOT NULL
+        team_id text NULL
       );
 
       CREATE TABLE team_documents (
@@ -71,6 +73,17 @@ describe("postgres algebra adapter integration", () => {
       CREATE TABLE documents (
         id text PRIMARY KEY,
         deleted_at timestamptz NULL
+      );
+
+      CREATE TABLE projects (
+        id text PRIMARY KEY,
+        team_id text NULL
+      );
+
+      CREATE TABLE files (
+        id text PRIMARY KEY,
+        project_id text NULL,
+        team_id text NULL
       );
 
       CREATE INDEX workspace_memberships_user_workspace_idx
@@ -94,12 +107,14 @@ describe("postgres algebra adapter integration", () => {
         ('u1', 'w1', 'm1', 'owner', NULL),
         ('u1', 'w1', 'm1', 'manager', NULL),
         ('u2', 'w1', 'm2', 'member', NULL),
+        ('u4', 'w1', 'm4', 'member', NULL),
         ('u3', 'w1', 'm3', 'owner', now());
 
       INSERT INTO membership_teams (membership_id, team_id)
       VALUES
         ('m1', 't1'),
-        ('m2', 't1');
+        ('m2', 't1'),
+        ('m4', NULL);
 
       INSERT INTO team_documents (team_id, document_id)
       VALUES
@@ -109,6 +124,17 @@ describe("postgres algebra adapter integration", () => {
       VALUES
         ('d1', NULL),
         ('d2', NULL);
+
+      INSERT INTO projects (id, team_id)
+      VALUES
+        ('p1', 't1'),
+        ('p2', NULL);
+
+      INSERT INTO files (id, project_id, team_id)
+      VALUES
+        ('f1', 'p1', NULL),
+        ('f2', NULL, 't1'),
+        ('f3', NULL, NULL);
     `)
   }, 60000)
 
@@ -190,6 +216,13 @@ describe("postgres algebra adapter integration", () => {
       instance.evaluate(rule, {
         [actor]: { id: "u2" },
         [workspace]: { id: "w1" },
+      }),
+    ).resolves.toBe(false)
+
+    await expect(
+      instance.evaluate(rule, {
+        [actor]: { id: "u1" },
+        [workspace]: { id: "missing-workspace" },
       }),
     ).resolves.toBe(false)
 
@@ -351,6 +384,76 @@ describe("postgres algebra adapter integration", () => {
     ).resolves.toBe(false)
   })
 
+  it("fails closed when a nullable relation edge breaks traversal", async () => {
+    const viewer = term<{ id: string }>()
+    const membership = term<{ id: string }>()
+    const team = term<{ id: string }>()
+    const document = term<{ id: string }>()
+
+    const userHasMembership = relation<{ id: string }, { id: string }>()
+    const membershipBelongsToTeam = relation<{ id: string }, { id: string }>()
+    const teamOwnsDocument = relation<{ id: string }, { id: string }>()
+
+    const adapter = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: userHasMembership,
+          source: {
+            kind: "join-table",
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "membership_id",
+            staticFilters: [{ sql: "{{source}}.deleted_at IS NULL" }],
+          },
+        },
+        {
+          relation: membershipBelongsToTeam,
+          source: {
+            kind: "edge",
+            table: "membership_teams",
+            leftColumn: "membership_id",
+            rightColumn: "team_id",
+          },
+        },
+        {
+          relation: teamOwnsDocument,
+          source: {
+            kind: "edge",
+            table: "team_documents",
+            leftColumn: "team_id",
+            rightColumn: "document_id",
+          },
+        },
+      ],
+      termEncodings: [
+        { term: viewer, encode: value => value.id },
+        { term: document, encode: value => value.id },
+      ],
+      queryExecutor: {
+        async query(sql, params) {
+          const result = await client.query(sql, [...params])
+          return { rows: result.rows }
+        },
+      },
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const rule = and(
+      userHasMembership(viewer, membership),
+      membershipBelongsToTeam(membership, team),
+      teamOwnsDocument(team, document),
+    )
+
+    await expect(
+      instance.evaluate(rule, {
+        [viewer]: { id: "u4" },
+        [document]: { id: "d1" },
+      }),
+    ).resolves.toBe(false)
+  })
+
   it("evaluates or branches against real postgres data", async () => {
     const actor = term<{ id: string }>()
     const workspace = term<{ id: string }>()
@@ -492,6 +595,101 @@ describe("postgres algebra adapter integration", () => {
         [workspace]: { id: "w1" },
       }),
     ).toBe(true)
+  })
+
+  it("supports optional parent traversal as an or of relation paths", async () => {
+    const file = term<{ id: string }>()
+    const project = term<{ id: string }>()
+    const team = term<{ id: string }>()
+    const document = term<{ id: string }>()
+
+    const fileInProject = relation<{ id: string }, { id: string }>()
+    const projectInTeam = relation<{ id: string }, { id: string }>()
+    const fileInTeam = relation<{ id: string }, { id: string }>()
+    const teamOwnsDocument = relation<{ id: string }, { id: string }>()
+
+    const adapter = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: fileInProject,
+          source: {
+            kind: "edge",
+            table: "files",
+            leftColumn: "id",
+            rightColumn: "project_id",
+          },
+        },
+        {
+          relation: projectInTeam,
+          source: {
+            kind: "edge",
+            table: "projects",
+            leftColumn: "id",
+            rightColumn: "team_id",
+          },
+        },
+        {
+          relation: fileInTeam,
+          source: {
+            kind: "edge",
+            table: "files",
+            leftColumn: "id",
+            rightColumn: "team_id",
+          },
+        },
+        {
+          relation: teamOwnsDocument,
+          source: {
+            kind: "edge",
+            table: "team_documents",
+            leftColumn: "team_id",
+            rightColumn: "document_id",
+          },
+        },
+      ],
+      termEncodings: [
+        { term: file, encode: value => value.id },
+        { term: document, encode: value => value.id },
+      ],
+      queryExecutor: {
+        async query(sql, params) {
+          const result = await client.query(sql, [...params])
+          return { rows: result.rows }
+        },
+      },
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const rule = and(
+      or(
+        and(fileInProject(file, project), projectInTeam(project, team)),
+        fileInTeam(file, team),
+      ),
+      teamOwnsDocument(team, document),
+    )
+
+    await expect(
+      instance.evaluate(rule, {
+        [file]: { id: "f1" },
+        [document]: { id: "d1" },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [file]: { id: "f2" },
+        [document]: { id: "d1" },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [file]: { id: "f3" },
+        [document]: { id: "d1" },
+      }),
+    ).resolves.toBe(false)
   })
 
   it("evaluates forall with relation-derived candidates (no explicit domain)", async () => {

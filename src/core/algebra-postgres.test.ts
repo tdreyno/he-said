@@ -648,4 +648,187 @@ describe("postgres algebra adapter", () => {
       ]),
     )
   })
+
+  it("rebinds static filter placeholders with planner-safe parameter offsets", () => {
+    const actor = term<{ id: string }>()
+    const role = term<string>()
+    const userHasWorkspaceRole = relation<{ id: string }, string>()
+
+    const plan = planPostgresRule(
+      and(userHasWorkspaceRole(actor, role), eq(role, "owner")),
+      {
+        relationMappings: [
+          {
+            relation: userHasWorkspaceRole,
+            source: {
+              kind: "join-table",
+              table: "workspace_memberships",
+              leftColumn: "user_id",
+              rightColumn: "role",
+              staticFilters: [
+                {
+                  sql: "{{source}}.tenant_id = $1 AND {{source}}.membership_kind = $2",
+                  params: ["tenant-1", "active"],
+                },
+              ],
+            },
+          },
+        ],
+        termEncodings: [{ term: actor, encode: encodeId }],
+        environment: {
+          [actor]: { id: "u1" },
+        },
+      },
+    )
+
+    expect(plan.sql).toContain('"rel1".tenant_id = $2')
+    expect(plan.sql).toContain('"rel1".membership_kind = $3')
+    expect(plan.params).toEqual(["u1", "tenant-1", "active", "owner"])
+  })
+
+  it("fails when static filter params are provided without SQL placeholders", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    expect(() =>
+      planPostgresRule(userInWorkspace(actor, workspace), {
+        relationMappings: [
+          {
+            relation: userInWorkspace,
+            source: {
+              kind: "join-table",
+              table: "workspace_memberships",
+              leftColumn: "user_id",
+              rightColumn: "workspace_id",
+              staticFilters: [
+                {
+                  sql: "{{source}}.deleted_at IS NULL",
+                  params: ["unexpected"],
+                },
+              ],
+            },
+          },
+        ],
+        termEncodings: [{ term: actor, encode: encodeId }],
+        environment: {
+          [actor]: { id: "u1" },
+        },
+      }),
+    ).toThrow(
+      "postgres adapter staticFilters.params were provided but staticFilters.sql has no positional parameters",
+    )
+  })
+
+  it("fails when static filter SQL placeholders do not have params", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    expect(() =>
+      planPostgresRule(userInWorkspace(actor, workspace), {
+        relationMappings: [
+          {
+            relation: userInWorkspace,
+            source: {
+              kind: "join-table",
+              table: "workspace_memberships",
+              leftColumn: "user_id",
+              rightColumn: "workspace_id",
+              staticFilters: [
+                {
+                  sql: "{{source}}.tenant_id = $1",
+                },
+              ],
+            },
+          },
+        ],
+        termEncodings: [{ term: actor, encode: encodeId }],
+        environment: {
+          [actor]: { id: "u1" },
+        },
+      }),
+    ).toThrow(
+      "postgres adapter staticFilters.sql uses positional parameters but no staticFilters.params were provided",
+    )
+  })
+
+  it("fails closed on unsupported unconstrained term nodes", () => {
+    const actor = term<{ id: string }>()
+
+    expect(() =>
+      planPostgresRule(and(actor), {
+        relationMappings: [],
+        environment: {},
+      }),
+    ).toThrow(
+      "postgres adapter does not support unconstrained term nodes yet; anchor the term through a relation or equality first",
+    )
+  })
+
+  it("fails closed on unsupported unary predicate nodes", () => {
+    const actor = term<{ id: string }>()
+    const constrainedActor = actor.is(value => value.id.startsWith("u"))
+
+    expect(() =>
+      planPostgresRule(eq(constrainedActor, { id: "u1" }), {
+        relationMappings: [],
+        termEncodings: [{ term: actor, encode: encodeId }],
+        environment: {},
+      }),
+    ).toThrow(
+      "postgres adapter does not support JavaScript unary predicates; use term.is(...) with SQL expression predicates",
+    )
+  })
+
+  it("produces deterministic SQL and params for identical inputs", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const role = term<string>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+    const userHasWorkspaceRole = relation<{ id: string }, string>()
+    const rule = and(
+      userInWorkspace(actor, workspace),
+      userHasWorkspaceRole(actor, role),
+      eq(role, "owner"),
+    )
+    const options = {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            kind: "join-table" as const,
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+            staticFilters: [{ sql: "{{source}}.deleted_at IS NULL" }],
+          },
+        },
+        {
+          relation: userHasWorkspaceRole,
+          source: {
+            kind: "join-table" as const,
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "role",
+            staticFilters: [{ sql: "{{source}}.deleted_at IS NULL" }],
+          },
+        },
+      ],
+      termEncodings: [
+        { term: actor, encode: encodeId },
+        { term: workspace, encode: encodeId },
+      ],
+      environment: {
+        [actor]: { id: "u1" },
+        [workspace]: { id: "w1" },
+      },
+    }
+
+    const firstPlan = planPostgresRule(rule, options)
+    const secondPlan = planPostgresRule(rule, options)
+
+    expect(secondPlan.sql).toBe(firstPlan.sql)
+    expect(secondPlan.params).toEqual(firstPlan.params)
+  })
 })

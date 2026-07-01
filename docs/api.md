@@ -8,6 +8,8 @@ he-said exports algebra constructors, an in-memory adapter, and related types.
 
 - term<T>()
 - term<T>().is(predicate)
+- fact<T>()
+- factIsTrue(factToken)
 - relation<Left, Right>()
 - eq(leftTerm, rightTermOrValue)
 - ref(name)
@@ -30,8 +32,11 @@ he-said exports algebra constructors, an in-memory adapter, and related types.
 
 Returns an EvaluatorInstance with:
 
-- evaluate(rule, environment): Promise<boolean>
-- evaluateWithProof(rule, environment): Promise<EvaluationProof>
+- evaluate(rule, environmentOrInput): Promise<boolean>
+- evaluateWithProof(rule, environmentOrInput): Promise<EvaluationProof>
+
+`environmentOrInput` accepts either a plain environment object, or an object with
+an optional `facts` bag keyed by fact token identity.
 
 ### In-Memory Adapter
 
@@ -48,6 +53,7 @@ InMemoryAdapterOptions:
 - Environment
 - Rule
 - Term<T>
+- Fact<T>
 - Relation<Left, Right>
 - UnaryPredicate<T, Env>
 - EvaluatorAdapter<Env, EvaluatorContext>

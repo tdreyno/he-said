@@ -41,6 +41,17 @@ These operators produce plain rule trees that adapters evaluate.
 ## Environments
 
 Evaluation receives an environment object with bindings for term symbols and optional string keys.
+You can also pass identity-keyed `facts` and keep them separate from the main environment:
+
+```ts
+const isAppAdmin = fact<boolean>()
+await engine.evaluate(canManage, {
+  [actor]: currentUser,
+  facts: {
+    [isAppAdmin]: true,
+  },
+})
+```
 
 Examples:
 

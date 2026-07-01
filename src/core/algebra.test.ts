@@ -6,11 +6,14 @@ import {
   distinct,
   eq,
   exactly,
+  fact,
+  factIsTrue,
   evaluator,
   forAll,
   implies,
   letRule,
   oneOf,
+  or,
   ref,
   relation,
   select,
@@ -191,6 +194,7 @@ describe("algebra api", () => {
       relations: [],
       domain: [],
     })
+
     const instance = evaluator(adapter, {
       evaluatorContext: null,
     })
@@ -221,6 +225,46 @@ describe("algebra api", () => {
       instance.evaluate(rule, {
         [a]: true,
         [b]: false,
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("supports identity-keyed facts bags", async () => {
+    const allow = term<boolean>()
+    const isAppAdmin = fact<boolean>()
+    const adapter = createInMemoryAdapter({
+      relations: [],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+    const rule = algebra.and(
+      eq(allow, true),
+      or(factIsTrue(isAppAdmin), eq(allow, true)),
+    )
+
+    await expect(
+      instance.evaluate(rule, {
+        [allow]: true,
+        facts: {
+          [isAppAdmin]: false,
+        },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(factIsTrue(isAppAdmin), {
+        facts: {
+          [isAppAdmin]: true,
+        },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(factIsTrue(isAppAdmin), {
+        facts: {
+          [isAppAdmin]: false,
+        },
       }),
     ).resolves.toBe(false)
   })

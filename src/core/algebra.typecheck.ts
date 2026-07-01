@@ -2,6 +2,8 @@ import {
   algebra,
   eq,
   evaluator,
+  fact,
+  factIsTrue,
   forAll,
   implies,
   letRule,
@@ -21,6 +23,7 @@ type Env = Environment & {
 const viewer = term<User>()
 const team = term<Team>()
 const tenant = term<string>()
+const isAppAdmin = fact<boolean>()
 
 const memberOf = relation<User, Team>()
 
@@ -34,6 +37,7 @@ memberOf(activeViewer, team)
 memberOf(team, team)
 
 eq(tenant, "acme")
+factIsTrue(isAppAdmin)
 
 // @ts-expect-error eq term mismatch
 eq(tenant, viewer)
@@ -60,4 +64,10 @@ const instance = evaluator(adapter, {
 instance.evaluate(baseRule, {
   [viewer]: { id: "u1", suspended: false },
   [tenant]: "acme",
+})
+
+instance.evaluate(factIsTrue(isAppAdmin), {
+  facts: {
+    [isAppAdmin]: true,
+  },
 })

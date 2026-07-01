@@ -10,6 +10,8 @@ export {
   exactly,
   through,
   term,
+  fact,
+  factIsTrue,
   relation,
   eq,
   ref,
@@ -37,6 +39,7 @@ export {
 } from "./core/algebra-postgres"
 export type {
   Environment,
+  EvaluationInput,
   EvaluationProofDetails,
   EvaluationProof,
   EvaluatorAdapter,
@@ -48,6 +51,7 @@ export type {
   RuleReferenceToken,
   Rule,
   Term,
+  Fact,
   TermInfo,
   UnaryPredicate,
 } from "./core/algebra"

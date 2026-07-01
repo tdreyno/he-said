@@ -41,6 +41,44 @@ These operators produce plain rule trees that adapters evaluate.
 ## Environments
 
 Evaluation receives an environment object with bindings for term symbols and optional string keys.
+You can also pass identity-keyed `facts` and keep them separate from the main environment:
+
+```ts
+const isAppAdmin = fact<boolean>()
+await engine.evaluate(canManage, {
+  [actor]: currentUser,
+  facts: {
+    [isAppAdmin]: true,
+  },
+})
+```
+
+### Facts
+
+Use `fact<T>()` for request-time values that are computed outside relation data (feature flags, external group membership, break-glass toggles).
+
+- Facts are symbol identity tokens, like terms.
+- Facts should be passed through `facts: { [factToken]: value }`.
+- Optional labels are for debugging only (for example `fact<boolean>("isAppAdmin")`).
+
+```ts
+const isAppAdmin = fact<boolean>()
+const hasBreakGlass = fact<boolean>()
+
+const canManage = or(
+  factIsTrue(isAppAdmin),
+  and(factIsTrue(hasBreakGlass), canManageDocument),
+)
+
+await engine.evaluate(canManage, {
+  [actor]: currentUser,
+  [document]: currentDocument,
+  facts: {
+    [isAppAdmin]: false,
+    [hasBreakGlass]: true,
+  },
+})
+```
 
 Examples:
 

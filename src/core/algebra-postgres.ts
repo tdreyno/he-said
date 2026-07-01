@@ -1,9 +1,16 @@
 import {
+  type AttributeAccessor,
   type Environment,
   type EvaluationProof,
   type EvaluatorAdapter,
+  isAttributeAccessor,
+  isPredicateExpression,
+  type PredicateExpression,
   type Relation,
   type Rule,
+  type SourceComparisonOperator,
+  type SourceOrdering,
+  type SourcePredicate,
   type Term,
 } from "./algebra"
 
@@ -11,6 +18,10 @@ type PostgresSourceFilter = {
   sql: string
   params?: ReadonlyArray<unknown>
 }
+
+export type PostgresSourceComparisonOperator = SourceComparisonOperator
+export type PostgresSourcePredicate = SourcePredicate
+export type PostgresSourceOrdering = SourceOrdering
 
 type PostgresSuggestedIndex = {
   columns: ReadonlyArray<string>
@@ -22,6 +33,8 @@ type PostgresRelationSourceBase = {
   leftColumn: string
   rightColumn: string
   staticFilters?: ReadonlyArray<PostgresSourceFilter>
+  predicates?: ReadonlyArray<PostgresSourcePredicate>
+  orderings?: ReadonlyArray<PostgresSourceOrdering>
   suggestedIndexes?: ReadonlyArray<PostgresSuggestedIndex>
 }
 
@@ -65,7 +78,10 @@ export interface PostgresTermEncoding<T> {
 type PostgresTermDomainSourceBase = {
   table: string
   valueColumn: string
+  columns?: Readonly<Record<string, string>>
   staticFilters?: ReadonlyArray<PostgresSourceFilter>
+  predicates?: ReadonlyArray<PostgresSourcePredicate>
+  orderings?: ReadonlyArray<PostgresSourceOrdering>
 }
 
 export type PostgresTermDomainSource<T> = PostgresTermDomainSourceBase & {
@@ -128,6 +144,7 @@ export interface PostgresAdapterOptions<
 type PlannerState = {
   relationMappings: Map<symbol, PostgresRelationSource>
   termDomains: Map<symbol, PostgresTermDomainSource<any>>
+  termAttributeAliases: Map<symbol, string>
   termEncodings: Map<symbol, PostgresTermEncoder<any>>
   definitions: Map<string, Rule>
   termIds: Map<symbol, string>
@@ -212,8 +229,43 @@ const applyFilterAlias = (sql: string, alias: string): string => {
   return sql.split("{{source}}").join(alias)
 }
 
-type UnsupportedPostgresRule = Extract<Rule, { type: "term" | "unary" }>
+const findOrderingForColumn = (
+  column: string,
+  orderings?: ReadonlyArray<PostgresSourceOrdering>,
+): PostgresSourceOrdering | undefined => {
+  return orderings?.find(ordering => ordering.column === column)
+}
 
+const renderOrderedColumnSql = (
+  columnSql: string,
+  ordering: PostgresSourceOrdering,
+): string => {
+  const quoteLiteral = (value: string): string => {
+    return `'${value.split("'").join("''")}'`
+  }
+  const clauses = Object.entries(ordering.order)
+    .map(([value, rank]) => `WHEN ${quoteLiteral(value)} THEN ${rank}`)
+    .join(" ")
+
+  return `(CASE ${columnSql} ${clauses} ELSE NULL END)`
+}
+
+const resolvePredicateValue = (
+  predicate: { column: string; value: unknown },
+  ordering?: PostgresSourceOrdering,
+): unknown => {
+  if (ordering) {
+    if (typeof predicate.value !== "string") {
+      throw new Error(
+        `ordered comparison predicate for "${predicate.column}" requires a string value`,
+      )
+    }
+
+    return ordering.order[predicate.value] ?? null
+  }
+
+  return predicate.value
+}
 const sortAndChildren = (children: ReadonlyArray<Rule>): Array<Rule> => {
   const rank = (node: Rule): number => {
     switch (node.type) {
@@ -300,7 +352,10 @@ const addSourceDiagnostics = (
   }
 
   const compositeIndex = `(${quoteIdentifier(source.leftColumn)}, ${quoteIdentifier(source.rightColumn)})`
-  const missingIndexRecommendation = source.staticFilters?.length
+  const hasSourceFilters =
+    (source.staticFilters?.length ?? 0) > 0 ||
+    (source.predicates?.length ?? 0) > 0
+  const missingIndexRecommendation = hasSourceFilters
     ? `Consider a partial index on ${quoteQualifiedIdentifier(source.table)} ${compositeIndex} with the join-table filter predicate.`
     : `Consider a composite index on ${quoteQualifiedIdentifier(source.table)} ${compositeIndex}.`
 
@@ -315,8 +370,7 @@ const addSourceDiagnostics = (
 
   if (
     source.recommendedView &&
-    ((source.staticFilters?.length ?? 0) > 0 ||
-      Object.keys(source.metadataColumns ?? {}).length > 0)
+    (hasSourceFilters || Object.keys(source.metadataColumns ?? {}).length > 0)
   ) {
     state.diagnostics.push({
       level: "info",
@@ -333,17 +387,17 @@ const createBuilder = (): QueryBuilder => ({
   whereClauses: [],
 })
 
-const ensureSupportedNode = (rule: UnsupportedPostgresRule): never => {
-  switch (rule.type) {
-    case "term":
-      throw new Error(
-        "postgres adapter does not support unconstrained term nodes yet; anchor the term through a relation or equality first",
-      )
-    case "unary":
-      throw new Error(
-        "postgres adapter does not support JavaScript unary predicates yet; provide a SQL-native relation or value constraint instead",
-      )
+const appendTerm = (
+  rule: Extract<Rule, { type: "term" }>,
+  builder: QueryBuilder,
+): QueryBuilder => {
+  if (builder.columns.has(rule.term)) {
+    return builder
   }
+
+  throw new Error(
+    "postgres adapter does not support unconstrained term nodes yet; anchor the term through a relation or equality first",
+  )
 }
 
 const cloneColumns = (
@@ -390,14 +444,14 @@ const appendRelation = (
     builder.columns.set(rule.right, rightSql)
   }
 
-  source.staticFilters?.forEach(filter => {
-    builder.whereClauses.push(
-      applyFilterAlias(filter.sql, quoteIdentifier(alias)),
-    )
-    filter.params?.forEach(value => {
-      nextParam(state, value)
-    })
-  })
+  appendStaticFilters(builder, state, alias, source.staticFilters)
+  appendSourcePredicates(
+    builder,
+    state,
+    alias,
+    source.predicates,
+    source.orderings,
+  )
 
   state.sources.push({
     relationId: rule.relationId,
@@ -454,6 +508,170 @@ const appendEqTerm = (
   )
 }
 
+const ensureSqlLiteral = (value: unknown): unknown => {
+  if (isSqlPrimitive(value)) {
+    return value
+  }
+
+  throw new Error(
+    "postgres adapter only supports SQL primitive literal values in predicate expressions",
+  )
+}
+
+const resolveOperandSql = (
+  operand: Term<unknown> | AttributeAccessor<any, unknown>,
+  builder: QueryBuilder,
+  state: PlannerState,
+): string => {
+  if (!isAttributeAccessor(operand)) {
+    const termSql = builder.columns.get(operand)
+    if (!termSql) {
+      throw new Error(
+        "postgres adapter cannot compile predicate expression when a term operand is not anchored by relation or environment binding",
+      )
+    }
+    return termSql
+  }
+
+  const termRoot = operand.term
+  const boundTermSql = builder.columns.get(termRoot)
+  if (!boundTermSql) {
+    throw new Error(
+      "postgres adapter cannot compile attribute predicate when the owning term is not anchored by relation or environment binding",
+    )
+  }
+
+  const attributeDomain = state.termDomains.get(termRoot)
+  if (!attributeDomain) {
+    throw new Error(
+      "postgres adapter is missing a termDomains mapping for an attr(...) predicate term",
+    )
+  }
+
+  let alias = state.termAttributeAliases.get(termRoot)
+  if (!alias) {
+    alias = nextAlias(state, "src")
+    const tableSql = `${quoteQualifiedIdentifier(attributeDomain.table)} ${quoteIdentifier(alias)}`
+    builder.fromClauses.push(
+      builder.fromClauses.length === 0
+        ? `FROM ${tableSql}`
+        : `JOIN ${tableSql} ON TRUE`,
+    )
+    const idSql = `${quoteIdentifier(alias)}.${quoteIdentifier(attributeDomain.valueColumn)}`
+    builder.whereClauses.push(`${idSql} IS NOT DISTINCT FROM ${boundTermSql}`)
+    appendStaticFilters(builder, state, alias, attributeDomain.staticFilters)
+    state.termAttributeAliases.set(termRoot, alias)
+  }
+
+  const mappedColumn = attributeDomain.columns?.[operand.column]
+  if (!mappedColumn) {
+    throw new Error(
+      `postgres adapter is missing an attr(...) column mapping in termDomains for "${operand.column}"`,
+    )
+  }
+
+  return `${quoteIdentifier(alias)}.${quoteIdentifier(mappedColumn)}`
+}
+
+const resolveRightOperandSql = (
+  right: Term<unknown> | AttributeAccessor<any, unknown> | unknown,
+  builder: QueryBuilder,
+  state: PlannerState,
+): string => {
+  if (isAttributeAccessor(right) || typeof right === "symbol") {
+    return resolveOperandSql(
+      right as Term<unknown> | AttributeAccessor<any, unknown>,
+      builder,
+      state,
+    )
+  }
+
+  const encoded = ensureSqlLiteral(right)
+  return nextParam(state, encoded)
+}
+
+const appendPredicateExpression = (
+  expression: PredicateExpression,
+  builder: QueryBuilder,
+  state: PlannerState,
+): QueryBuilder => {
+  switch (expression.operator) {
+    case "eq": {
+      const leftSql = resolveOperandSql(expression.left, builder, state)
+      const rightSql = resolveRightOperandSql(expression.right, builder, state)
+      builder.whereClauses.push(`${leftSql} IS NOT DISTINCT FROM ${rightSql}`)
+      return builder
+    }
+    case "ne": {
+      const leftSql = resolveOperandSql(expression.left, builder, state)
+      const rightSql = resolveRightOperandSql(expression.right, builder, state)
+      builder.whereClauses.push(
+        `NOT (${leftSql} IS NOT DISTINCT FROM ${rightSql})`,
+      )
+      return builder
+    }
+    case "gt":
+    case "ge":
+    case "lt":
+    case "le": {
+      const leftSql = resolveOperandSql(expression.left, builder, state)
+      const rightSql = resolveRightOperandSql(expression.right, builder, state)
+      const operator =
+        expression.operator === "gt"
+          ? ">"
+          : expression.operator === "ge"
+            ? ">="
+            : expression.operator === "lt"
+              ? "<"
+              : "<="
+      builder.whereClauses.push(`${leftSql} ${operator} ${rightSql}`)
+      return builder
+    }
+    case "one-of": {
+      const leftSql = resolveOperandSql(expression.left, builder, state)
+      if (expression.values.length === 0) {
+        builder.whereClauses.push("FALSE")
+        return builder
+      }
+
+      const parts = expression.values.map(value => {
+        const param = nextParam(state, ensureSqlLiteral(value))
+        return `${leftSql} IS NOT DISTINCT FROM ${param}`
+      })
+      builder.whereClauses.push(`(${parts.join(" OR ")})`)
+      return builder
+    }
+    case "is-null": {
+      const operandSql = resolveOperandSql(expression.operand, builder, state)
+      builder.whereClauses.push(`${operandSql} IS NULL`)
+      return builder
+    }
+    case "is-not-null": {
+      const operandSql = resolveOperandSql(expression.operand, builder, state)
+      builder.whereClauses.push(`${operandSql} IS NOT NULL`)
+      return builder
+    }
+    default: {
+      const exhaustive: never = expression
+      return exhaustive
+    }
+  }
+}
+
+const appendUnary = (
+  rule: Extract<Rule, { type: "unary" }>,
+  builder: QueryBuilder,
+  state: PlannerState,
+): QueryBuilder => {
+  if (!isPredicateExpression(rule.predicate)) {
+    throw new Error(
+      "postgres adapter does not support JavaScript unary predicates; use term.is(...) with SQL expression predicates",
+    )
+  }
+
+  return appendPredicateExpression(rule.predicate, builder, state)
+}
+
 const appendStaticFilters = (
   builder: QueryBuilder,
   state: PlannerState,
@@ -467,6 +685,46 @@ const appendStaticFilters = (
     filter.params?.forEach(value => {
       nextParam(state, value)
     })
+  })
+}
+
+const appendSourcePredicates = (
+  builder: QueryBuilder,
+  state: PlannerState,
+  alias: string,
+  predicates?: ReadonlyArray<PostgresSourcePredicate>,
+  orderings?: ReadonlyArray<PostgresSourceOrdering>,
+): void => {
+  predicates?.forEach(predicate => {
+    const columnSql = `${quoteIdentifier(alias)}.${quoteIdentifier(predicate.column)}`
+
+    if (predicate.op === "in") {
+      const param = nextParam(state, [...predicate.values])
+      builder.whereClauses.push(`${columnSql} = ANY(${param})`)
+      return
+    }
+
+    if (predicate.op === "eq") {
+      const param = nextParam(state, predicate.value)
+      builder.whereClauses.push(`${columnSql} IS NOT DISTINCT FROM ${param}`)
+      return
+    }
+
+    const ordering = findOrderingForColumn(predicate.column, orderings)
+    const leftExpression = ordering
+      ? renderOrderedColumnSql(columnSql, ordering)
+      : columnSql
+    const operator =
+      predicate.op === "gt"
+        ? ">"
+        : predicate.op === "ge"
+          ? ">="
+          : predicate.op === "lt"
+            ? "<"
+            : "<="
+    const value = resolvePredicateValue(predicate, ordering)
+    const param = nextParam(state, value)
+    builder.whereClauses.push(`${leftExpression} ${operator} ${param}`)
   })
 }
 
@@ -550,6 +808,13 @@ const buildTermDomainQuery = (
     )
     builder.whereClauses.push(`${valueSql} IS NOT NULL`)
     appendStaticFilters(builder, state, alias, explicitDomain.staticFilters)
+    appendSourcePredicates(
+      builder,
+      state,
+      alias,
+      explicitDomain.predicates,
+      explicitDomain.orderings,
+    )
     const where =
       builder.whereClauses.length === 0
         ? ""
@@ -597,6 +862,13 @@ const buildTermDomainQuery = (
       )
       builder.whereClauses.push(`${valueSql} IS NOT NULL`)
       appendStaticFilters(builder, state, alias, entry.source.staticFilters)
+      appendSourcePredicates(
+        builder,
+        state,
+        alias,
+        entry.source.predicates,
+        entry.source.orderings,
+      )
       const where =
         builder.whereClauses.length === 0
           ? ""
@@ -661,9 +933,18 @@ const compileExistsSql = (
       const ruleSql = compileExistsSql(rule.rule, state, inheritedColumns)
       return `SELECT 1 WHERE EXISTS(${contextSql}) AND EXISTS(${ruleSql})`
     }
-    case "term":
-    case "unary":
-      return ensureSupportedNode(rule)
+    case "term": {
+      const builder = createBuilder()
+      builder.columns = cloneColumns(inheritedColumns)
+      appendTerm(rule, builder)
+      return renderInnerSql(builder)
+    }
+    case "unary": {
+      const builder = createBuilder()
+      builder.columns = cloneColumns(inheritedColumns)
+      appendUnary(rule, builder, state)
+      return renderInnerSql(builder)
+    }
     case "and":
     case "relation":
     case "eq-value":
@@ -735,8 +1016,9 @@ const appendConjunctiveRule = (
       )
       return builder
     case "term":
+      return appendTerm(rule, builder)
     case "unary":
-      return ensureSupportedNode(rule)
+      return appendUnary(rule, builder, state)
     default: {
       const exhaustive: never = rule
       return exhaustive
@@ -799,6 +1081,7 @@ const createPlannerState = (
   return {
     relationMappings: relationMappingsById(options.relationMappings),
     termDomains: termDomainsById(options.termDomains ?? []),
+    termAttributeAliases: new Map(),
     termEncodings: termEncodingsById(options.termEncodings ?? []),
     definitions: collectDefinitions(rule),
     termIds: new Map(),

@@ -62,6 +62,25 @@ const allowed = await engine.evaluate(canEdit, {
 4. Choose an evaluator adapter.
 5. Call evaluate or evaluateWithProof.
 
+## Injected Facts (Identity-Keyed)
+
+Use facts for app-computed booleans/scalars that are not relation data.
+
+```ts
+import { fact, factIsTrue, or } from "@tdreyno/he-said"
+
+const isAppAdmin = fact<boolean>()
+const canManage = or(factIsTrue(isAppAdmin), canEdit)
+
+const allowed = await engine.evaluate(canManage, {
+  [user]: { id: "u1", suspended: false },
+  [document]: { id: "d1" },
+  facts: {
+    [isAppAdmin]: true,
+  },
+})
+```
+
 ## Validation Commands
 
 ```bash

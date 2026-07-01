@@ -5,8 +5,12 @@ export type Environment = Record<PropertyKey, unknown>
 export type Term<T> = symbol & {
   readonly __termBrand?: T
   is<Env extends Environment = Environment>(
-    predicate: UnaryPredicate<T, Env>,
+    predicate: TermPredicate<T, Env>,
   ): Term<T>
+}
+
+export type Fact<T> = symbol & {
+  readonly __factBrand?: T
 }
 
 export type UnaryPredicate<T, Env extends Environment = Environment> = (
@@ -14,19 +18,129 @@ export type UnaryPredicate<T, Env extends Environment = Environment> = (
   environment: Readonly<Env>,
 ) => MaybePromise<boolean>
 
+export type SourceComparisonOperator = "eq" | "gt" | "ge" | "lt" | "le"
+
+export type SourcePredicate =
+  | {
+      column: string
+      op: "in"
+      values: ReadonlyArray<unknown>
+    }
+  | {
+      column: string
+      op: SourceComparisonOperator
+      value: unknown
+    }
+
+export type SourceOrdering = {
+  column: string
+  order: Readonly<Record<string, number>>
+}
+
 type AnyTerm = Term<unknown>
-type AnyUnaryPredicate = UnaryPredicate<unknown, Environment>
+type AnyAttributeAccessor = AttributeAccessor<any, unknown>
+
+export interface AttributeAccessor<T, TValue> {
+  readonly kind: "attribute-accessor"
+  readonly term: Term<T>
+  readonly column: string
+  readonly __valueBrand?: TValue
+}
+
+export type PredicateOperand<TValue = unknown> =
+  | Term<TValue>
+  | AttributeAccessor<any, TValue>
+
+type AnyPredicateOperand = PredicateOperand<unknown>
+
+export interface EqPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "eq"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface NePredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "ne"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface GtPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "gt"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface GePredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "ge"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface LtPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "lt"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface LePredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "le"
+  readonly left: AnyPredicateOperand
+  readonly right: AnyPredicateOperand | unknown
+}
+
+export interface OneOfPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "one-of"
+  readonly left: AnyPredicateOperand
+  readonly values: ReadonlyArray<unknown>
+}
+
+export interface IsNullPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "is-null"
+  readonly operand: AnyPredicateOperand
+}
+
+export interface IsNotNullPredicateExpression {
+  readonly kind: "predicate-expression"
+  readonly operator: "is-not-null"
+  readonly operand: AnyPredicateOperand
+}
+
+export type PredicateExpression =
+  | EqPredicateExpression
+  | NePredicateExpression
+  | GtPredicateExpression
+  | GePredicateExpression
+  | LtPredicateExpression
+  | LePredicateExpression
+  | OneOfPredicateExpression
+  | IsNullPredicateExpression
+  | IsNotNullPredicateExpression
+
+export type TermPredicate<T, Env extends Environment = Environment> =
+  | UnaryPredicate<T, Env>
+  | PredicateExpression
+
+type AnyTermPredicate = TermPredicate<unknown, Environment>
 
 type TermMetadata = {
   root: AnyTerm
-  predicates: Array<AnyUnaryPredicate>
+  predicates: Array<AnyTermPredicate>
 }
 
 const termMetadata = new Map<AnyTerm, TermMetadata>()
 
 const createDerivedTerm = <T, Env extends Environment = Environment>(
   value: Term<T>,
-  predicate: UnaryPredicate<T, Env>,
+  predicate: TermPredicate<T, Env>,
 ): Term<T> => {
   const source = normalizeTerm(value)
   const derived = Symbol("rules.term.derived") as Term<T>
@@ -34,8 +148,8 @@ const createDerivedTerm = <T, Env extends Environment = Environment>(
   termMetadata.set(derived as AnyTerm, {
     root: source.root as AnyTerm,
     predicates: [
-      ...(source.predicates as Array<AnyUnaryPredicate>),
-      predicate as AnyUnaryPredicate,
+      ...(source.predicates as Array<AnyTermPredicate>),
+      predicate as AnyTermPredicate,
     ],
   })
 
@@ -44,13 +158,24 @@ const createDerivedTerm = <T, Env extends Environment = Environment>(
 
 const termIs = function <T, Env extends Environment = Environment>(
   this: symbol,
-  predicate: UnaryPredicate<T, Env>,
+  predicate: TermPredicate<T, Env>,
 ): Term<T> {
   if (!isKnownTerm(this)) {
     throw new Error("unknown term used in rule expression")
   }
 
-  return createDerivedTerm(this as Term<T>, predicate)
+  const normalized = normalizePredicate(predicate as AnyTermPredicate)
+  const root = normalizeTerm(this as Term<T>).root as AnyTerm
+  if (
+    isPredicateExpression(normalized) &&
+    !getPredicateExpressionTerms(normalized).includes(root)
+  ) {
+    throw new Error(
+      "predicate expression must reference the term it is attached to via term.is(...)",
+    )
+  }
+
+  return createDerivedTerm(this as Term<T>, normalized as TermPredicate<T, Env>)
 }
 
 const installTermIsMethod = (): void => {
@@ -99,12 +224,12 @@ const getTermMetadata = <T>(value: Term<T>): TermMetadata => {
 
 const normalizeTerm = <T>(
   value: Term<T>,
-): { root: Term<T>; predicates: Array<UnaryPredicate<T>> } => {
+): { root: Term<T>; predicates: Array<TermPredicate<T>> } => {
   const metadata = getTermMetadata(value)
 
   return {
     root: metadata.root as Term<T>,
-    predicates: metadata.predicates as Array<UnaryPredicate<T>>,
+    predicates: metadata.predicates as Array<TermPredicate<T>>,
   }
 }
 
@@ -113,8 +238,64 @@ const unaryNodesForTerm = <T>(value: Term<T>): Array<UnaryNode> => {
   return metadata.predicates.map(predicate => ({
     type: "unary",
     term: metadata.root as AnyTerm,
-    predicate: predicate as AnyUnaryPredicate,
+    predicate: predicate as AnyTermPredicate,
   }))
+}
+
+const normalizeOperand = (value: AnyPredicateOperand): AnyPredicateOperand => {
+  if (isKnownTerm(value)) {
+    return normalizeTerm(value as Term<unknown>).root
+  }
+
+  return {
+    ...value,
+    term: normalizeTerm(value.term as Term<unknown>).root,
+  } as AttributeAccessor<any, unknown>
+}
+
+const normalizeOperandOrValue = (
+  value: AnyPredicateOperand | unknown,
+): AnyPredicateOperand | unknown => {
+  if (isKnownTerm(value) || isAttributeAccessor(value)) {
+    return normalizeOperand(value as AnyPredicateOperand)
+  }
+
+  return value
+}
+
+const normalizePredicate = (predicate: AnyTermPredicate): AnyTermPredicate => {
+  if (!isPredicateExpression(predicate)) {
+    return predicate
+  }
+
+  switch (predicate.operator) {
+    case "eq":
+    case "ne":
+    case "gt":
+    case "ge":
+    case "lt":
+    case "le":
+      return {
+        ...predicate,
+        left: normalizeOperand(predicate.left),
+        right: normalizeOperandOrValue(predicate.right),
+      }
+    case "one-of":
+      return {
+        ...predicate,
+        left: normalizeOperand(predicate.left),
+      }
+    case "is-null":
+    case "is-not-null":
+      return {
+        ...predicate,
+        operand: normalizeOperand(predicate.operand),
+      }
+    default: {
+      const exhaustive: never = predicate
+      return exhaustive
+    }
+  }
 }
 
 const isRuleNode = (value: unknown): value is Rule => {
@@ -237,7 +418,7 @@ export interface RelationNode {
 export interface UnaryNode {
   readonly type: "unary"
   readonly term: AnyTerm
-  readonly predicate: AnyUnaryPredicate
+  readonly predicate: AnyTermPredicate
 }
 
 export interface TermNode {
@@ -349,8 +530,132 @@ export const sortRulesByPriorityAndKind = <
 
 export interface TermInfo<T> {
   readonly root: Term<T>
-  readonly predicates: Array<UnaryPredicate<T>>
+  readonly predicates: Array<TermPredicate<T>>
   readonly predicateCount: number
+}
+
+type SymbolOptions = {
+  label?: string
+}
+
+const normalizeSymbolLabel = (
+  options?: string | SymbolOptions,
+): string | undefined => {
+  if (options === undefined) {
+    return undefined
+  }
+
+  const label = typeof options === "string" ? options : options.label
+
+  if (label === undefined) {
+    return undefined
+  }
+
+  const normalized = label.trim()
+  if (normalized.length === 0) {
+    throw new Error("symbol label must not be empty")
+  }
+
+  return normalized
+}
+
+const createBaseTerm = <T>(
+  kind: "term" | "fact",
+  options?: string | SymbolOptions,
+): Term<T> => {
+  const label = normalizeSymbolLabel(options)
+  const symbolLabel = label ? `rules.${kind}.${label}` : `rules.${kind}`
+  const value = Symbol(symbolLabel) as Term<T>
+  registerBaseTerm(value)
+  return value
+}
+
+export const isAttributeAccessor = (
+  value: unknown,
+): value is AnyAttributeAccessor => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const candidate = value as {
+    kind?: unknown
+    term?: unknown
+    column?: unknown
+  }
+  return (
+    candidate.kind === "attribute-accessor" &&
+    typeof candidate.column === "string" &&
+    isKnownTerm(candidate.term)
+  )
+}
+
+export const isPredicateExpression = (
+  value: unknown,
+): value is PredicateExpression => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const candidate = value as { kind?: unknown; operator?: unknown }
+  if (candidate.kind !== "predicate-expression") {
+    return false
+  }
+
+  return (
+    candidate.operator === "eq" ||
+    candidate.operator === "ne" ||
+    candidate.operator === "gt" ||
+    candidate.operator === "ge" ||
+    candidate.operator === "lt" ||
+    candidate.operator === "le" ||
+    candidate.operator === "one-of" ||
+    candidate.operator === "is-null" ||
+    candidate.operator === "is-not-null"
+  )
+}
+
+export const getPredicateExpressionTerms = (
+  expression: PredicateExpression,
+): Array<AnyTerm> => {
+  const terms = new Set<AnyTerm>()
+  const addOperand = (operand: AnyPredicateOperand): void => {
+    if (isKnownTerm(operand)) {
+      terms.add(normalizeTerm(operand as Term<unknown>).root as AnyTerm)
+      return
+    }
+
+    terms.add(normalizeTerm(operand.term as Term<unknown>).root as AnyTerm)
+  }
+
+  switch (expression.operator) {
+    case "eq":
+    case "ne":
+    case "gt":
+    case "ge":
+    case "lt":
+    case "le":
+      addOperand(expression.left)
+      if (
+        isKnownTerm(expression.right) ||
+        isAttributeAccessor(expression.right)
+      ) {
+        addOperand(expression.right as AnyPredicateOperand)
+      }
+      break
+    case "one-of":
+      addOperand(expression.left)
+      break
+    case "is-null":
+    case "is-not-null":
+      addOperand(expression.operand)
+      break
+    default: {
+      const exhaustive: never = expression
+      return exhaustive
+    }
+  }
+
+  return [...terms]
 }
 
 export const getTermInfo = <T>(value: Term<T>): TermInfo<T> => {
@@ -362,10 +667,31 @@ export const getTermInfo = <T>(value: Term<T>): TermInfo<T> => {
   }
 }
 
-export const term = <T>(): Term<T> => {
-  const value = Symbol("rules.term") as Term<T>
-  registerBaseTerm(value)
-  return value
+export const term = <T>(options?: string | SymbolOptions): Term<T> => {
+  return createBaseTerm("term", options)
+}
+
+export const fact = <T>(options?: string | SymbolOptions): Fact<T> => {
+  return createBaseTerm("fact", options) as unknown as Fact<T>
+}
+
+export const factIsTrue = (value: Fact<boolean>): Rule => {
+  return eq(value as unknown as Term<boolean>, true)
+}
+
+export const attr = <T, K extends keyof T & string>(
+  target: Term<T>,
+  column: K,
+): AttributeAccessor<T, T[K]> => {
+  if (column.trim().length === 0) {
+    throw new Error("attr column is required")
+  }
+
+  return {
+    kind: "attribute-accessor",
+    term: normalizeTerm(target).root,
+    column,
+  }
 }
 
 export const relation = <Left, Right>(): Relation<Left, Right> => {
@@ -398,7 +724,24 @@ export const relation = <Left, Right>(): Relation<Left, Right> => {
   return relationFn
 }
 
-export const eq = <T>(left: Term<T>, right: Term<T> | T): Rule => {
+export function eq<T>(left: Term<T>, right: Term<T> | T): Rule
+export function eq<T>(
+  left: AttributeAccessor<any, T>,
+  right: AttributeAccessor<any, T> | T,
+): PredicateExpression
+export function eq<T>(
+  left: Term<T> | AttributeAccessor<any, T>,
+  right: Term<T> | AttributeAccessor<any, T> | T,
+): Rule | PredicateExpression {
+  if (isAttributeAccessor(left)) {
+    return {
+      kind: "predicate-expression",
+      operator: "eq",
+      left: normalizeOperand(left),
+      right: normalizeOperandOrValue(right),
+    }
+  }
+
   const normalizedLeft = normalizeTerm(left)
   const leftFilters = unaryNodesForTerm(left as AnyTerm)
 
@@ -432,6 +775,44 @@ export const eq = <T>(left: Term<T>, right: Term<T> | T): Rule => {
     children: flattenByType("and", [base, ...leftFilters]),
   }
 }
+
+const createBinaryExpression = (
+  operator: "ne" | "gt" | "ge" | "lt" | "le",
+  left: AnyPredicateOperand,
+  right: AnyPredicateOperand | unknown,
+): PredicateExpression => {
+  return {
+    kind: "predicate-expression",
+    operator,
+    left: normalizeOperand(left),
+    right: normalizeOperandOrValue(right),
+  }
+}
+
+export const ne = <T>(
+  left: PredicateOperand<T>,
+  right: PredicateOperand<T> | T,
+): PredicateExpression => createBinaryExpression("ne", left, right)
+
+export const gt = <T>(
+  left: PredicateOperand<T>,
+  right: PredicateOperand<T> | T,
+): PredicateExpression => createBinaryExpression("gt", left, right)
+
+export const ge = <T>(
+  left: PredicateOperand<T>,
+  right: PredicateOperand<T> | T,
+): PredicateExpression => createBinaryExpression("ge", left, right)
+
+export const lt = <T>(
+  left: PredicateOperand<T>,
+  right: PredicateOperand<T> | T,
+): PredicateExpression => createBinaryExpression("lt", left, right)
+
+export const le = <T>(
+  left: PredicateOperand<T>,
+  right: PredicateOperand<T> | T,
+): PredicateExpression => createBinaryExpression("le", left, right)
 
 export const ref = (name: string): Rule => {
   if (name.trim().length === 0) {
@@ -521,8 +902,45 @@ const normalizeCount = (value: number, name: string): number => {
   return value
 }
 
-export const oneOf = <T>(value: Term<T>, values: ReadonlyArray<T>): Rule => {
+export function oneOf<T>(value: Term<T>, values: ReadonlyArray<T>): Rule
+export function oneOf<T>(
+  value: AttributeAccessor<any, T>,
+  values: ReadonlyArray<T>,
+): PredicateExpression
+export function oneOf<T>(
+  value: Term<T> | AttributeAccessor<any, T>,
+  values: ReadonlyArray<T>,
+): Rule | PredicateExpression {
+  if (isAttributeAccessor(value)) {
+    return {
+      kind: "predicate-expression",
+      operator: "one-of",
+      left: normalizeOperand(value),
+      values,
+    }
+  }
+
   return or(...values.map(option => eq(value, option)))
+}
+
+export const isNull = <T>(
+  operand: PredicateOperand<T>,
+): PredicateExpression => {
+  return {
+    kind: "predicate-expression",
+    operator: "is-null",
+    operand: normalizeOperand(operand),
+  }
+}
+
+export const isNotNull = <T>(
+  operand: PredicateOperand<T>,
+): PredicateExpression => {
+  return {
+    kind: "predicate-expression",
+    operator: "is-not-null",
+    operand: normalizeOperand(operand),
+  }
 }
 
 export const atLeast = (
@@ -740,11 +1158,48 @@ export interface FilterOptions<Env extends Environment, T> {
   readonly candidates?: ReadonlyArray<T>
 }
 
+export type EvaluationInput<Env extends Environment = Environment> = Env & {
+  readonly facts?: Readonly<Record<PropertyKey, unknown>>
+}
+
+const normalizeEvaluationInput = <Env extends Environment>(
+  input: Readonly<Env> | Readonly<EvaluationInput<Env>>,
+): Readonly<Env> => {
+  if (!Object.prototype.hasOwnProperty.call(input, "facts")) {
+    return input as Readonly<Env>
+  }
+
+  const candidate = input as Readonly<EvaluationInput<Env>>
+  if (candidate.facts === undefined) {
+    return input as Readonly<Env>
+  }
+
+  if (typeof candidate.facts !== "object" || candidate.facts === null) {
+    throw new Error("evaluation facts must be an object when provided")
+  }
+
+  const environment: Environment = {}
+  Reflect.ownKeys(input).forEach(key => {
+    if (key !== "facts") {
+      environment[key] = input[key as keyof typeof input]
+    }
+  })
+
+  Reflect.ownKeys(candidate.facts).forEach(key => {
+    environment[key] = candidate.facts?.[key as keyof typeof candidate.facts]
+  })
+
+  return environment as Readonly<Env>
+}
+
 export interface EvaluatorInstance<Env extends Environment> {
-  evaluate(rule: Rule, environment: Readonly<Env>): Promise<boolean>
+  evaluate(
+    rule: Rule,
+    input: Readonly<Env> | Readonly<EvaluationInput<Env>>,
+  ): Promise<boolean>
   evaluateWithProof(
     rule: Rule,
-    environment: Readonly<Env>,
+    input: Readonly<Env> | Readonly<EvaluationInput<Env>>,
   ): Promise<EvaluationProof>
   filter<T>(
     rule: Rule,
@@ -757,12 +1212,14 @@ export const evaluator = <Env extends Environment, EvaluatorContext>(
   config: { evaluatorContext: EvaluatorContext },
 ): EvaluatorInstance<Env> => {
   return {
-    evaluate(rule, environment) {
+    evaluate(rule, input) {
+      const environment = normalizeEvaluationInput(input)
       return Promise.resolve(
         adapter.evaluate(rule, environment, config.evaluatorContext),
       )
     },
-    async evaluateWithProof(rule, environment) {
+    async evaluateWithProof(rule, input) {
+      const environment = normalizeEvaluationInput(input)
       if (adapter.evaluateWithProof) {
         return adapter.evaluateWithProof(
           rule,

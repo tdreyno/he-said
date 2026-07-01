@@ -35,13 +35,13 @@ CASL conditions often use object syntax; he-said prefers typed selectors and com
 
 Common translations:
 
-| CASL-style condition intent               | he-said translation                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `ownerId === user.id`                     | `subjectEqResource((subject) => subject.id, (resource) => resource.ownerId)`    |
-| `resource.department === user.department` | `userEqResource((user) => user.department, (resource) => resource.department)`  |
-| `resource.sensitivity <= user.clearance`  | `resourceLteUser((resource) => resource.sensitivity, (user) => user.clearance)` |
-| Multiple required clauses                 | `all(...)` (or array shorthand in ACL/ABAC rules)                               |
-| Alternative clauses                       | `or(...)`                                                                       |
+| CASL-style condition intent               | he-said translation                                                |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `ownerId === user.id`                     | `eq((subject) => subject.id, (resource) => resource.ownerId)`      |
+| `resource.department === user.department` | `eq((user) => user.department, (resource) => resource.department)` |
+| `resource.sensitivity <= user.clearance`  | `ge((user) => user.clearance, (resource) => resource.sensitivity)` |
+| Multiple required clauses                 | `and(...)` (or `all(...)` in ABAC / array shorthand in ACL/ABAC)   |
+| Alternative clauses                       | `or(...)`                                                          |
 
 Keep selectors small and explicit. Reuse common selectors across rules.
 
@@ -92,6 +92,27 @@ For large systems, migrate behind a feature flag:
 2. Record mismatches with enough input context to reproduce.
 3. Resolve mismatch classes, then progressively switch reads to he-said decisions.
 4. Remove dual-run mode once mismatch rate is effectively zero in representative traffic.
+
+## Optional local DX helpers during migration
+
+If your team prefers more CASL-like readability, add small app-level wrappers while migrating:
+
+```ts
+import { and, type Rule } from "@tdreyno/he-said"
+import { eq, ge } from "@tdreyno/he-said/abac"
+
+export const all = (...rules: Rule[]): Rule => and(...rules)
+
+export const same = <L, R, T>(left: (left: L) => T, right: (right: R) => T) =>
+  eq(left, right)
+
+export const lteBy = <User, Resource>(
+  resourceSelector: (resource: Resource) => number,
+  userSelector: (user: User) => number,
+) => ge(userSelector, resourceSelector)
+```
+
+Keep these helpers local to your app so migration ergonomics improve without coupling docs to non-exported package APIs.
 
 ## Where to go next
 

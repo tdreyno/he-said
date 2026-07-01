@@ -110,9 +110,12 @@ const blocked = await instance.evaluate(canReadDocument, {
 Core constructors:
 
 - `term<T>()`
-- `term<T>().is(predicate)`
+- `term<T>().is(jsPredicateOrExpression)`
+- `attr(term, "column")`
 - `relation<Left, Right>()`
 - `eq(leftTerm, rightTermOrValue)`
+- `eq(attr(...), attr(...) | value)`
+- `ne`, `gt`, `ge`, `lt`, `le`, `isNull`, `isNotNull`
 
 Composition operators:
 
@@ -164,8 +167,27 @@ Use when relation facts are persisted in SQL tables.
 - `planPostgresRule(rule, { relationMappings, environment, ... })`
 - `planPostgresPredicate(rule, { relationMappings, environment, bindings?, ... })`
 
+`relationMappings[].source` supports both legacy `staticFilters` and typed predicates:
+
+```typescript
+{
+  kind: "join-table",
+  table: "team_members",
+  leftColumn: "user_id",
+  rightColumn: "team_id",
+  predicates: [{ column: "role", op: "ge", value: "editor" }],
+  orderings: [
+    { column: "role", order: { viewer: 10, editor: 20, admin: 30, owner: 40 } },
+  ],
+}
+```
+
+Typed predicates are compiled to parameterized SQL (`eq`, `in`, `gt`, `ge`, `lt`, `le`).
+
 `planPostgresRule` can produce diagnostics for join-table index hints, domain coverage for `forAll`, and other planner guidance.
 `planPostgresPredicate` returns a parameterized `EXISTS(...)` fragment for composing authorization constraints into caller-owned `WHERE` clauses.
+
+For SQL pushdown with `term.is(...)` expressions, configure `termDomains` with `columns` mappings so `attr(term, "column")` can resolve to mapped SQL columns.
 
 ## RBAC Package
 

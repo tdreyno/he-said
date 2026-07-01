@@ -1,9 +1,14 @@
 import {
   algebra,
+  attr,
   eq,
   evaluator,
+  fact,
+  factIsTrue,
   forAll,
+  ge,
   implies,
+  isNotNull,
   letRule,
   ref,
   relation,
@@ -21,6 +26,7 @@ type Env = Environment & {
 const viewer = term<User>()
 const team = term<Team>()
 const tenant = term<string>()
+const isAppAdmin = fact<boolean>()
 
 const memberOf = relation<User, Team>()
 
@@ -28,12 +34,19 @@ const activeViewer = viewer.is((value, env: Env) => {
   return !value.suspended && typeof env.tenant === "string"
 })
 
+const sqlComparableViewer = viewer
+  .is(eq(attr(viewer, "id"), "u1"))
+  .is(ge(attr(viewer, "id"), "u0"))
+  .is(isNotNull(attr(viewer, "id")))
+
 memberOf(activeViewer, team)
+memberOf(sqlComparableViewer, team)
 
 // @ts-expect-error wrong term type for relation left
 memberOf(team, team)
 
 eq(tenant, "acme")
+factIsTrue(isAppAdmin)
 
 // @ts-expect-error eq term mismatch
 eq(tenant, viewer)
@@ -69,4 +82,10 @@ instance.filter(baseRule, {
   },
   term: team,
   candidates: [{ id: "t1" }],
+})
+
+instance.evaluate(factIsTrue(isAppAdmin), {
+  facts: {
+    [isAppAdmin]: true,
+  },
 })

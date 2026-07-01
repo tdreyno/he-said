@@ -1,10 +1,17 @@
 import {
+  type AttributeAccessor,
   buildEvaluationProofDetails,
   type Environment,
   type EvaluationProof,
   type EvaluatorAdapter,
+  getPredicateExpressionTerms,
+  isAttributeAccessor,
+  isPredicateExpression,
+  type PredicateExpression,
   type Relation,
   type Rule,
+  type SourceOrdering,
+  type SourcePredicate,
   type Term,
 } from "./algebra"
 
@@ -229,6 +236,138 @@ type SolverState = {
   }
 }
 
+const resolveExpressionOperand = (
+  operand: Term<unknown> | AttributeAccessor<any, unknown>,
+  environment: Readonly<Environment>,
+): unknown => {
+  if (!isAttributeAccessor(operand)) {
+    return environment[operand]
+  }
+
+  const entity = environment[operand.term]
+  if (
+    entity === null ||
+    entity === undefined ||
+    typeof entity !== "object" ||
+    Array.isArray(entity)
+  ) {
+    return undefined
+  }
+
+  return (entity as Record<string, unknown>)[operand.column]
+}
+
+const evaluatePredicateExpression = (
+  expression: PredicateExpression,
+  environment: Readonly<Environment>,
+): boolean => {
+  const resolve = (
+    value: Term<unknown> | AttributeAccessor<any, unknown> | unknown,
+  ): unknown => {
+    if (isAttributeAccessor(value) || typeof value === "symbol") {
+      return resolveExpressionOperand(
+        value as Term<unknown> | AttributeAccessor<any, unknown>,
+        environment,
+      )
+    }
+    return value
+  }
+
+  switch (expression.operator) {
+    case "eq":
+      return Object.is(resolve(expression.left), resolve(expression.right))
+    case "ne":
+      return !Object.is(resolve(expression.left), resolve(expression.right))
+    case "gt": {
+      const left = resolve(expression.left)
+      const right = resolve(expression.right)
+      return left !== null &&
+        left !== undefined &&
+        right !== null &&
+        right !== undefined
+        ? (left as number | string | Date) > (right as number | string | Date)
+        : false
+    }
+    case "ge": {
+      const left = resolve(expression.left)
+      const right = resolve(expression.right)
+      return left !== null &&
+        left !== undefined &&
+        right !== null &&
+        right !== undefined
+        ? (left as number | string | Date) >= (right as number | string | Date)
+        : false
+    }
+    case "lt": {
+      const left = resolve(expression.left)
+      const right = resolve(expression.right)
+      return left !== null &&
+        left !== undefined &&
+        right !== null &&
+        right !== undefined
+        ? (left as number | string | Date) < (right as number | string | Date)
+        : false
+    }
+    case "le": {
+      const left = resolve(expression.left)
+      const right = resolve(expression.right)
+      return left !== null &&
+        left !== undefined &&
+        right !== null &&
+        right !== undefined
+        ? (left as number | string | Date) <= (right as number | string | Date)
+        : false
+    }
+    case "one-of": {
+      const left = resolve(expression.left)
+      return expression.values.some(option => Object.is(left, option))
+    }
+    case "is-null": {
+      const value = resolve(expression.operand)
+      return value === null || value === undefined
+    }
+    case "is-not-null": {
+      const value = resolve(expression.operand)
+      return value !== null && value !== undefined
+    }
+    default: {
+      const exhaustive: never = expression
+      return exhaustive
+    }
+  }
+}
+
+const expandEnvironmentsForTerms = (
+  environments: Array<Environment>,
+  terms: Array<AnyTerm>,
+  state: SolverState,
+): Array<Environment> => {
+  let expanded = environments
+
+  terms.forEach(term => {
+    const next: Array<Environment> = []
+    expanded.forEach(environment => {
+      const candidates = collectCandidates(
+        term,
+        environment,
+        state.facts,
+        state.analysis,
+        state.globalDomain,
+      )
+      candidates.forEach(candidate => {
+        next.push(
+          hasBinding(environment, term)
+            ? environment
+            : bindValue(environment, term, candidate),
+        )
+      })
+    })
+    expanded = next
+  })
+
+  return expanded
+}
+
 const collectDefinitions = (rule: Rule): Map<string, Rule> => {
   const definitions = new Map<string, Rule>()
 
@@ -431,6 +570,22 @@ const solveRule = async (
       const output: Array<Environment> = []
 
       for (const environment of environments) {
+        if (isPredicateExpression(rule.predicate)) {
+          const expression = rule.predicate
+          const terms = getPredicateExpressionTerms(expression)
+          const expanded = expandEnvironmentsForTerms(
+            [environment],
+            terms,
+            state,
+          )
+          expanded.forEach(next => {
+            if (evaluatePredicateExpression(expression, next)) {
+              output.push(next)
+            }
+          })
+          continue
+        }
+
         const candidates = collectCandidates(
           rule.term,
           environment,
@@ -791,6 +946,15 @@ export const validateStratifiedNegation = (rule: Rule): void => {
 export interface InMemoryRelationFacts<Left, Right> {
   relation: Relation<Left, Right>
   pairs: Array<readonly [Left, Right]>
+  rows?: Array<InMemoryRelationRow<Left, Right>>
+  predicates?: ReadonlyArray<SourcePredicate>
+  orderings?: ReadonlyArray<SourceOrdering>
+}
+
+export interface InMemoryRelationRow<Left, Right> {
+  left: Left
+  right: Right
+  columns?: Readonly<Record<string, unknown>>
 }
 
 export interface InMemoryAdapterOptions {
@@ -801,11 +965,125 @@ export interface InMemoryAdapterOptions {
 const buildFacts = (
   relations: Array<InMemoryRelationFacts<any, any>>,
 ): RelationFacts => {
+  const findOrderingForColumn = (
+    column: string,
+    orderings?: ReadonlyArray<SourceOrdering>,
+  ): SourceOrdering | undefined => {
+    return orderings?.find(ordering => ordering.column === column)
+  }
+
+  const readRowColumnValue = <Left, Right>(
+    row: InMemoryRelationRow<Left, Right>,
+    column: string,
+  ): unknown => {
+    if (column === "left") {
+      return row.left
+    }
+
+    if (column === "right") {
+      return row.right
+    }
+
+    return row.columns?.[column]
+  }
+
+  const toComparableValue = (
+    value: unknown,
+    ordering?: SourceOrdering,
+  ): unknown => {
+    if (!ordering) {
+      return value
+    }
+
+    if (typeof value !== "string") {
+      return null
+    }
+
+    return ordering.order[value] ?? null
+  }
+
+  const rowMatchesPredicate = (
+    row: InMemoryRelationRow<any, any>,
+    predicate: SourcePredicate,
+    orderings?: ReadonlyArray<SourceOrdering>,
+  ): boolean => {
+    const rawValue = readRowColumnValue(row, predicate.column)
+    if (rawValue === undefined) {
+      throw new Error(
+        `in-memory relation predicate references unknown column "${predicate.column}"`,
+      )
+    }
+
+    if (predicate.op === "in") {
+      return predicate.values.some(value => Object.is(rawValue, value))
+    }
+
+    if (predicate.op === "eq") {
+      return Object.is(rawValue, predicate.value)
+    }
+
+    const ordering = findOrderingForColumn(predicate.column, orderings)
+    const left = toComparableValue(rawValue, ordering)
+    const right = toComparableValue(predicate.value, ordering)
+
+    if (
+      left === null ||
+      left === undefined ||
+      right === null ||
+      right === undefined
+    ) {
+      return false
+    }
+
+    if (predicate.op === "gt") {
+      return (
+        (left as number | string | Date) > (right as number | string | Date)
+      )
+    }
+
+    if (predicate.op === "ge") {
+      return (
+        (left as number | string | Date) >= (right as number | string | Date)
+      )
+    }
+
+    if (predicate.op === "lt") {
+      return (
+        (left as number | string | Date) < (right as number | string | Date)
+      )
+    }
+
+    if (predicate.op === "le") {
+      return (
+        (left as number | string | Date) <= (right as number | string | Date)
+      )
+    }
+
+    return false
+  }
+
   const output = new Map<symbol, Array<FactPair>>()
 
   relations.forEach(entry => {
+    const rows =
+      entry.rows ??
+      entry.pairs.map(pair => ({
+        left: pair[0],
+        right: pair[1],
+      }))
+    const filteredRows =
+      entry.predicates && entry.predicates.length > 0
+        ? rows.filter(row =>
+            entry.predicates?.every(predicate =>
+              rowMatchesPredicate(row, predicate, entry.orderings),
+            ),
+          )
+        : rows
+    const filteredPairs = filteredRows.map(
+      row => [row.left, row.right] as readonly [unknown, unknown],
+    )
     const existing = output.get(entry.relation.id) ?? []
-    output.set(entry.relation.id, [...existing, ...entry.pairs])
+    output.set(entry.relation.id, [...existing, ...filteredPairs])
   })
 
   return output

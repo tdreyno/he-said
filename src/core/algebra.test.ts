@@ -2,15 +2,20 @@ import {
   atLeast,
   atMost,
   algebra,
+  attr,
   createInMemoryAdapter,
   distinct,
   eq,
   exactly,
+  fact,
+  factIsTrue,
   evaluator,
   forAll,
   implies,
   letRule,
   oneOf,
+  or,
+  isNotNull,
   ref,
   relation,
   select,
@@ -111,6 +116,66 @@ describe("algebra api", () => {
     expect(allowedArchived).toBe(true)
   })
 
+  it("supports typed relation predicates with rank ordering in the in-memory adapter", async () => {
+    const user = term<{ id: string }>()
+    const team = term<{ id: string }>()
+    const userEditsTeam = relation<{ id: string }, { id: string }>()
+
+    const u1 = { id: "u1", suspended: false } satisfies User
+    const u2 = { id: "u2", suspended: false } satisfies User
+    const t1 = { id: "t1" } satisfies Team
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        {
+          relation: userEditsTeam,
+          pairs: [],
+          rows: [
+            {
+              left: u1,
+              right: t1,
+              columns: { role: "editor", status: "active" },
+            },
+            {
+              left: u2,
+              right: t1,
+              columns: { role: "viewer", status: "active" },
+            },
+          ],
+          predicates: [
+            { column: "status", op: "eq", value: "active" },
+            { column: "role", op: "ge", value: "editor" },
+          ],
+          orderings: [
+            {
+              column: "role",
+              order: { viewer: 10, editor: 20, admin: 30, owner: 40 },
+            },
+          ],
+        },
+      ],
+      domain: [u1, u2, t1],
+    })
+
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    await expect(
+      instance.evaluate(userEditsTeam(user, team), {
+        [user]: u1,
+        [team]: t1,
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(userEditsTeam(user, team), {
+        [user]: u2,
+        [team]: t1,
+      }),
+    ).resolves.toBe(false)
+  })
+
   it("throws when letRule name is blank", () => {
     const value = term<string>()
 
@@ -191,6 +256,7 @@ describe("algebra api", () => {
       relations: [],
       domain: [],
     })
+
     const instance = evaluator(adapter, {
       evaluatorContext: null,
     })
@@ -221,6 +287,46 @@ describe("algebra api", () => {
       instance.evaluate(rule, {
         [a]: true,
         [b]: false,
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("supports identity-keyed facts bags", async () => {
+    const allow = term<boolean>()
+    const isAppAdmin = fact<boolean>()
+    const adapter = createInMemoryAdapter({
+      relations: [],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+    const rule = algebra.and(
+      eq(allow, true),
+      or(factIsTrue(isAppAdmin), eq(allow, true)),
+    )
+
+    await expect(
+      instance.evaluate(rule, {
+        [allow]: true,
+        facts: {
+          [isAppAdmin]: false,
+        },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(factIsTrue(isAppAdmin), {
+        facts: {
+          [isAppAdmin]: true,
+        },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(factIsTrue(isAppAdmin), {
+        facts: {
+          [isAppAdmin]: false,
+        },
       }),
     ).resolves.toBe(false)
   })
@@ -710,6 +816,52 @@ describe("algebra api", () => {
         [user]: { id: "u1", suspended: false },
         [permission]: "write",
         [role]: "admin",
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("evaluates expression predicates attached through term.is(...)", async () => {
+    type Viewer = { id: string; suspended: boolean }
+    type RecordDoc = {
+      id: string
+      ownerId: string
+      workspaceAccess: string | null
+    }
+
+    const viewer = term<Viewer>()
+    const document = term<RecordDoc>()
+
+    const rule = algebra.and(
+      viewer.is(eq(attr(viewer, "id"), attr(document, "ownerId"))),
+      document.is(isNotNull(attr(document, "workspaceAccess"))),
+    )
+
+    const adapter = createInMemoryAdapter({
+      relations: [],
+      domain: [
+        { id: "u1", suspended: false } satisfies Viewer,
+        {
+          id: "d1",
+          ownerId: "u1",
+          workspaceAccess: "read",
+        } satisfies RecordDoc,
+      ],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    await expect(
+      instance.evaluate(rule, {
+        [viewer]: { id: "u1", suspended: false },
+        [document]: { id: "d1", ownerId: "u1", workspaceAccess: "read" },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, {
+        [viewer]: { id: "u1", suspended: false },
+        [document]: { id: "d1", ownerId: "u2", workspaceAccess: "read" },
       }),
     ).resolves.toBe(false)
   })

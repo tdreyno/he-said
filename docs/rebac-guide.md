@@ -54,9 +54,12 @@ const policy = scopedPolicy({
 
 ## Tiered Membership Source Predicates
 
-`grant.atLeast("editor")` compiles to a role predicate requirement. Use
-`policy.sourceFor(action, resourceType, source)` to attach those requirements to
-adapter relation sources.
+`grant.atLeast("editor")` compiles tier predicates directly into the membership
+rule, so `policy.ruleFor(...)` / `policy.can(...)` enforce the threshold
+without extra wiring.
+
+`policy.sourceFor(action, resourceType, source)` remains available when you want
+to mirror those predicates onto adapter relation sources.
 
 This keeps rules declarative while preserving adapter-level pushdown for both:
 

@@ -76,7 +76,6 @@ describe("rebac facade", () => {
       ],
       pairs: [["alice", "team-1"] as const, ["bob", "team-1"] as const],
     }
-    const memberFacts = policy.sourceFor("update", "File", memberFactsInput)
 
     const adapter = createInMemoryAdapter({
       relations: [
@@ -92,7 +91,7 @@ describe("rebac facade", () => {
           relation: projectInTeam,
           pairs: [["project-1", "team-1"]],
         },
-        memberFacts,
+        memberFactsInput,
       ],
       domain: ["alice", "bob", "team-1", "file-1"],
     })
@@ -114,6 +113,76 @@ describe("rebac facade", () => {
         [resourceTerm]: "file-1",
       }),
     ).resolves.toBe(false)
+  })
+
+  it("enforces atLeast tiers in can() without requiring sourceFor wiring", async () => {
+    const actor = term<User>()
+    const team = term<Team>()
+    const fileInTeam = relation<File, Team>()
+    const memberOfTeam = relation<User, Team>()
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        {
+          relation: fileInTeam,
+          pairs: [["file-1", "team-1"]],
+        },
+        {
+          relation: memberOfTeam,
+          pairs: [
+            ["viewer-user", "team-1"],
+            ["editor-user", "team-1"],
+          ],
+          rows: [
+            {
+              left: "viewer-user",
+              right: "team-1",
+              columns: { role: "viewer" },
+            },
+            {
+              left: "editor-user",
+              right: "team-1",
+              columns: { role: "editor" },
+            },
+          ],
+        },
+      ],
+      domain: ["viewer-user", "editor-user", "team-1", "file-1"],
+    })
+
+    const policy = scopedPolicy<
+      User,
+      Team,
+      { File: File },
+      "read" | "update",
+      "viewer" | "editor"
+    >({
+      actor,
+      scope: team,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: {
+        File: through(fileInTeam),
+      },
+      grants: {
+        read: grant.atLeast("viewer"),
+        update: grant.atLeast("editor"),
+      },
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    await expect(
+      policy.can("viewer-user", "read", "File", "file-1"),
+    ).resolves.toBe(true)
+    await expect(
+      policy.can("viewer-user", "update", "File", "file-1"),
+    ).resolves.toBe(false)
+    await expect(
+      policy.can("editor-user", "update", "File", "file-1"),
+    ).resolves.toBe(true)
   })
 
   it("supports read-scope widening with grant.readScope()", async () => {

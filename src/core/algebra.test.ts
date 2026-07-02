@@ -179,6 +179,48 @@ describe("algebra api", () => {
     ).resolves.toBe(false)
   })
 
+  it("supports relation-node predicates at call sites", async () => {
+    const user = term<{ id: string }>()
+    const team = term<{ id: string }>()
+    const userInTeam = relation<{ id: string }, { id: string }>()
+
+    const u1 = { id: "u1", suspended: false } satisfies User
+    const u2 = { id: "u2", suspended: false } satisfies User
+    const t1 = { id: "t1" } satisfies Team
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        {
+          relation: userInTeam,
+          pairs: [],
+          rows: [
+            { left: u1, right: t1, columns: { role: "editor" } },
+            { left: u2, right: t1, columns: { role: "viewer" } },
+          ],
+        },
+      ],
+      domain: [u1, u2, t1],
+    })
+
+    const instance = evaluator(adapter, { evaluatorContext: null })
+    const rule = userInTeam(user, team, {
+      predicates: [{ column: "role", op: "ge", value: "editor" }],
+      orderings: [
+        {
+          column: "role",
+          order: { viewer: 10, editor: 20, owner: 30 },
+        },
+      ],
+    })
+
+    await expect(
+      instance.evaluate(rule, { [user]: u1, [team]: t1 }),
+    ).resolves.toBe(true)
+    await expect(
+      instance.evaluate(rule, { [user]: u2, [team]: t1 }),
+    ).resolves.toBe(false)
+  })
+
   it("supports colocated relation definitions", async () => {
     const viewer = term<User>()
     const document = term<Document>()

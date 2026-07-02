@@ -113,7 +113,7 @@ algebra rules and returns:
 
 - `ruleFor(action, resourceType)`
 - `roleRequirementFor(action, resourceType)`
-- `sourceFor(action, resourceType, source)` (attaches tier predicates/orderings)
+- `sourceFor(action, resourceType, source)` (optional source pushdown mirror for tier predicates/orderings)
 - `can(...)` when initialized with `evaluator`
 
 ## Key Types

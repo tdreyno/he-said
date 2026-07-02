@@ -21,7 +21,19 @@ type AnyTerm = Term<unknown>
 
 type FactPair = readonly [unknown, unknown]
 
-type RelationFacts = Map<symbol, Array<FactPair>>
+type InMemoryFactRow = {
+  left: unknown
+  right: unknown
+  columns?: Readonly<Record<string, unknown>>
+  orderings?: ReadonlyArray<SourceOrdering>
+}
+
+type RelationFactSet = {
+  pairs: Array<FactPair>
+  rows: Array<InMemoryFactRow>
+}
+
+type RelationFacts = Map<symbol, RelationFactSet>
 
 type RelationUse = {
   relationId: symbol
@@ -30,6 +42,114 @@ type RelationUse = {
 
 type Analysis = {
   relationUses: Map<AnyTerm, Array<RelationUse>>
+}
+
+const findOrderingForColumn = (
+  column: string,
+  orderings?: ReadonlyArray<SourceOrdering>,
+): SourceOrdering | undefined => {
+  return orderings?.find(ordering => ordering.column === column)
+}
+
+const readRowColumnValue = (row: InMemoryFactRow, column: string): unknown => {
+  if (column === "left") {
+    return row.left
+  }
+
+  if (column === "right") {
+    return row.right
+  }
+
+  return row.columns?.[column]
+}
+
+const toComparableValue = (
+  value: unknown,
+  ordering?: SourceOrdering,
+): unknown => {
+  if (!ordering) {
+    return value
+  }
+
+  if (typeof value !== "string") {
+    return null
+  }
+
+  return ordering.order[value] ?? null
+}
+
+const mergeOrderings = (
+  source?: ReadonlyArray<SourceOrdering>,
+  additional?: ReadonlyArray<SourceOrdering>,
+): Array<SourceOrdering> | undefined => {
+  if (
+    (!source || source.length === 0) &&
+    (!additional || additional.length === 0)
+  ) {
+    return undefined
+  }
+
+  const merged = new Map<string, SourceOrdering>()
+  source?.forEach(ordering => {
+    merged.set(ordering.column, ordering)
+  })
+  additional?.forEach(ordering => {
+    merged.set(ordering.column, ordering)
+  })
+
+  return [...merged.values()]
+}
+
+const rowMatchesPredicate = (
+  row: InMemoryFactRow,
+  predicate: SourcePredicate,
+  orderings?: ReadonlyArray<SourceOrdering>,
+): boolean => {
+  const rawValue = readRowColumnValue(row, predicate.column)
+  if (rawValue === undefined) {
+    throw new Error(
+      `in-memory relation predicate references unknown column "${predicate.column}"`,
+    )
+  }
+
+  if (predicate.op === "in") {
+    return predicate.values.some(value => Object.is(rawValue, value))
+  }
+
+  if (predicate.op === "eq") {
+    return Object.is(rawValue, predicate.value)
+  }
+
+  const ordering = findOrderingForColumn(predicate.column, orderings)
+  const left = toComparableValue(rawValue, ordering)
+  const right = toComparableValue(predicate.value, ordering)
+
+  if (
+    left === null ||
+    left === undefined ||
+    right === null ||
+    right === undefined
+  ) {
+    return false
+  }
+
+  if (predicate.op === "gt") {
+    return (left as number | string | Date) > (right as number | string | Date)
+  }
+
+  if (predicate.op === "ge") {
+    return (left as number | string | Date) >= (right as number | string | Date)
+  }
+
+  if (predicate.op === "lt") {
+    return (left as number | string | Date) < (right as number | string | Date)
+  }
+
+  if (predicate.op === "le") {
+    return (left as number | string | Date) <= (right as number | string | Date)
+  }
+
+  return false
 }
 
 const hasBinding = (
@@ -126,7 +246,7 @@ const collectCandidates = (
 
   const uses = analysis.relationUses.get(term) ?? []
   uses.forEach(use => {
-    const relationFacts = facts.get(use.relationId) ?? []
+    const relationFacts = facts.get(use.relationId)?.pairs ?? []
     relationFacts.forEach(pair => {
       const value = use.side === "left" ? pair[0] : pair[1]
       candidates.add(value)
@@ -156,7 +276,7 @@ const hasValueInTermRelationFacts = (
   const uses = analysis.relationUses.get(term) ?? []
 
   return uses.some(use => {
-    const relationFacts = facts.get(use.relationId) ?? []
+    const relationFacts = facts.get(use.relationId)?.pairs ?? []
     return relationFacts.some(pair => {
       const candidate = use.side === "left" ? pair[0] : pair[1]
       return Object.is(candidate, value)
@@ -571,7 +691,21 @@ const solveRule = async (
     }
 
     case "relation": {
-      const relationFacts = state.facts.get(rule.relationId) ?? []
+      const relationFacts = state.facts.get(rule.relationId)
+      const relationPairs =
+        rule.predicates && rule.predicates.length > 0
+          ? (relationFacts?.rows ?? [])
+              .filter(row =>
+                rule.predicates?.every(predicate =>
+                  rowMatchesPredicate(
+                    row,
+                    predicate,
+                    mergeOrderings(row.orderings, rule.orderings),
+                  ),
+                ),
+              )
+              .map(row => [row.left, row.right] as const)
+          : (relationFacts?.pairs ?? [])
       const output: Array<Environment> = []
 
       environments.forEach(environment => {
@@ -580,7 +714,7 @@ const solveRule = async (
         const leftValue = environment[rule.left]
         const rightValue = environment[rule.right]
 
-        relationFacts.forEach(pair => {
+        relationPairs.forEach(pair => {
           const [candidateLeft, candidateRight] = pair
 
           if (leftBound && !Object.is(leftValue, candidateLeft)) {
@@ -1272,108 +1406,15 @@ const toRelationFacts = (
 const buildFacts = (
   relations: Array<InMemoryRelationFacts<any, any> | Relation<any, any>>,
 ): RelationFacts => {
-  const findOrderingForColumn = (
-    column: string,
-    orderings?: ReadonlyArray<SourceOrdering>,
-  ): SourceOrdering | undefined => {
-    return orderings?.find(ordering => ordering.column === column)
-  }
-
-  const readRowColumnValue = <Left, Right>(
-    row: InMemoryRelationRow<Left, Right>,
-    column: string,
-  ): unknown => {
-    if (column === "left") {
-      return row.left
-    }
-
-    if (column === "right") {
-      return row.right
-    }
-
-    return row.columns?.[column]
-  }
-
-  const toComparableValue = (
-    value: unknown,
-    ordering?: SourceOrdering,
-  ): unknown => {
-    if (!ordering) {
-      return value
-    }
-
-    if (typeof value !== "string") {
-      return null
-    }
-
-    return ordering.order[value] ?? null
-  }
-
-  const rowMatchesPredicate = (
-    row: InMemoryRelationRow<any, any>,
-    predicate: SourcePredicate,
-    orderings?: ReadonlyArray<SourceOrdering>,
-  ): boolean => {
-    const rawValue = readRowColumnValue(row, predicate.column)
-    if (rawValue === undefined) {
-      throw new Error(
-        `in-memory relation predicate references unknown column "${predicate.column}"`,
-      )
-    }
-
-    if (predicate.op === "in") {
-      return predicate.values.some(value => Object.is(rawValue, value))
-    }
-
-    if (predicate.op === "eq") {
-      return Object.is(rawValue, predicate.value)
-    }
-
-    const ordering = findOrderingForColumn(predicate.column, orderings)
-    const left = toComparableValue(rawValue, ordering)
-    const right = toComparableValue(predicate.value, ordering)
-
-    if (
-      left === null ||
-      left === undefined ||
-      right === null ||
-      right === undefined
-    ) {
-      return false
-    }
-
-    if (predicate.op === "gt") {
-      return (
-        (left as number | string | Date) > (right as number | string | Date)
-      )
-    }
-
-    if (predicate.op === "ge") {
-      return (
-        (left as number | string | Date) >= (right as number | string | Date)
-      )
-    }
-
-    if (predicate.op === "lt") {
-      return (
-        (left as number | string | Date) < (right as number | string | Date)
-      )
-    }
-
-    if (predicate.op === "le") {
-      return (
-        (left as number | string | Date) <= (right as number | string | Date)
-      )
-    }
-
-    return false
-  }
-
-  const output = new Map<symbol, Array<FactPair>>()
+  const output = new Map<symbol, RelationFactSet>()
 
   relations.map(toRelationFacts).forEach(entry => {
-    const rows =
-      entry.rows ??
+    const rows: Array<InMemoryFactRow> =
+      entry.rows?.map(row => ({
+        left: row.left,
+        right: row.right,
+        columns: row.columns,
+      })) ??
       entry.pairs.map(pair => ({
         left: pair[0],
         right: pair[1],
@@ -1389,8 +1430,17 @@ const buildFacts = (
     const filteredPairs = filteredRows.map(
       row => [row.left, row.right] as readonly [unknown, unknown],
     )
-    const existing = output.get(entry.relation.id) ?? []
-    output.set(entry.relation.id, [...existing, ...filteredPairs])
+    const normalizedRows = filteredRows.map(row => ({
+      left: row.left,
+      right: row.right,
+      columns: row.columns,
+      orderings: entry.orderings,
+    }))
+    const existing = output.get(entry.relation.id) ?? { pairs: [], rows: [] }
+    output.set(entry.relation.id, {
+      pairs: [...existing.pairs, ...filteredPairs],
+      rows: [...existing.rows, ...normalizedRows],
+    })
   })
 
   return output

@@ -695,6 +695,50 @@ describe("postgres algebra adapter", () => {
     expect(plan.params).toEqual(["u1", "t1", "active", ["w1", "w2"]])
   })
 
+  it("plans relation-node predicates as parameterized SQL", () => {
+    const actor = term<{ id: string }>()
+    const team = term<{ id: string }>()
+    const userInTeam = relation<{ id: string }, { id: string }>()
+
+    const plan = planPostgresRule(
+      userInTeam(actor, team, {
+        predicates: [{ column: "role", op: "ge", value: "editor" }],
+        orderings: [
+          {
+            column: "role",
+            order: { viewer: 10, editor: 20, owner: 30 },
+          },
+        ],
+      }),
+      {
+        relationMappings: [
+          {
+            relation: userInTeam,
+            source: {
+              kind: "join-table",
+              table: "team_members",
+              leftColumn: "user_id",
+              rightColumn: "team_id",
+            },
+          },
+        ],
+        termEncodings: [
+          { term: actor, encode: encodeId },
+          { term: team, encode: encodeId },
+        ],
+        environment: {
+          [actor]: { id: "u1" },
+          [team]: { id: "t1" },
+        },
+      },
+    )
+
+    expect(plan.sql).toContain("(CASE")
+    expect(plan.sql).toContain("WHEN 'viewer' THEN 10")
+    expect(plan.sql).toContain(">= $3")
+    expect(plan.params).toEqual(["u1", "t1", 20])
+  })
+
   it("supports ordered rank comparisons for typed predicates", () => {
     const actor = term<{ id: string }>()
     const team = term<{ id: string }>()

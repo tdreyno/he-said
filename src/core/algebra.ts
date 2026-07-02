@@ -371,7 +371,7 @@ export interface Relation<Left, Right> {
   readonly kind: "relation"
   readonly id: symbol
   readonly pairs?: ReadonlyArray<readonly [Left, Right]>;
-  (left: Term<Left>, right: Term<Right>): Rule
+  (left: Term<Left>, right: Term<Right>, options?: RelationNodeOptions): Rule
 }
 
 export type ConstraintInput = Rule | AnyTerm
@@ -418,6 +418,13 @@ export interface RelationNode {
   readonly relationId: symbol
   readonly left: AnyTerm
   readonly right: AnyTerm
+  readonly predicates?: ReadonlyArray<SourcePredicate>
+  readonly orderings?: ReadonlyArray<SourceOrdering>
+}
+
+export interface RelationNodeOptions {
+  readonly predicates?: ReadonlyArray<SourcePredicate>
+  readonly orderings?: ReadonlyArray<SourceOrdering>
 }
 
 export interface UnaryNode {
@@ -717,7 +724,11 @@ export const relation = <Left, Right>(
 ): Relation<Left, Right> => {
   const relationId = Symbol("rules.relation")
 
-  const relationFn = ((left: Term<Left>, right: Term<Right>): Rule => {
+  const relationFn = ((
+    left: Term<Left>,
+    right: Term<Right>,
+    options?: RelationNodeOptions,
+  ): Rule => {
     const normalizedLeft = normalizeTerm(left)
     const normalizedRight = normalizeTerm(right)
 
@@ -726,6 +737,14 @@ export const relation = <Left, Right>(
       relationId,
       left: normalizedLeft.root as AnyTerm,
       right: normalizedRight.root as AnyTerm,
+      predicates:
+        options?.predicates && options.predicates.length > 0
+          ? [...options.predicates]
+          : undefined,
+      orderings:
+        options?.orderings && options.orderings.length > 0
+          ? [...options.orderings]
+          : undefined,
     }
 
     return applyDerivedTermFilters(base, left as AnyTerm, right as AnyTerm)

@@ -659,6 +659,11 @@ const appendRelation = (
 
   const alias = nextAlias(state, "rel")
   if (source.kind === "prepared") {
+    if (rule.predicates && rule.predicates.length > 0) {
+      throw new Error(
+        "relation node predicates require a mapped postgres relation source",
+      )
+    }
     const preparedLeftColumn = "left_value"
     const preparedRightColumn = "right_value"
     const tableSql =
@@ -732,12 +737,22 @@ const appendRelation = (
   }
 
   appendStaticFilters(builder, state, alias, source.staticFilters)
+  const mergedOrderings = (() => {
+    const orderings = new Map<string, SourceOrdering>()
+    source.orderings?.forEach(ordering => {
+      orderings.set(ordering.column, ordering)
+    })
+    rule.orderings?.forEach(ordering => {
+      orderings.set(ordering.column, ordering)
+    })
+    return [...orderings.values()]
+  })()
   appendSourcePredicates(
     builder,
     state,
     alias,
-    source.predicates,
-    source.orderings,
+    [...(source.predicates ?? []), ...(rule.predicates ?? [])],
+    mergedOrderings,
   )
 
   state.sources.push({

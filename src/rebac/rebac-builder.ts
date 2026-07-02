@@ -410,7 +410,10 @@ export const scopedPolicy = <
           requirement,
           rule: and(
             base,
-            options.membership.relation(options.actor, options.scope),
+            options.membership.relation(options.actor, options.scope, {
+              predicates: [requirement.predicate],
+              orderings: [requirement.ordering],
+            }),
           ),
         }
       } else if (isReadScopeGrant(definition)) {

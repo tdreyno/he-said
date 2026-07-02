@@ -127,6 +127,11 @@ algebra rules and returns:
 - `associatesTable(table, { left, right, predicates? })`
 - `inColumn(columnRef, values)`
 - `drizzleResourceType(table, { owner, contextTerms?, fixed? })`
+- `rowVar(table)` (typed term + `.$` typed attribute accessors)
+- `rowVarDomain(rowVar)` (planner `termDomains` entry without string duplication)
+- `rowVarEncoding(rowVar)` (term encoder keyed by the row variable's selected PK)
+- `bindRowVar(rowVar, value)` (environment fragment keyed by row variable PK)
+- `via(navigation)` (explicit relation-navigation wrapper for `through(...)`)
 - `drizzleExecutor(db)`
 
 ## Key Types
@@ -156,6 +161,8 @@ algebra rules and returns:
 - oneOf(term, values) is equivalent to or(eq(term, v1), eq(term, v2), ...).
 - exists(term) checks row/domain existence for a bound term (useful for fail-closed admin bypass guards).
 - SQL-safe predicate expressions are attached through term.is(...), for example: term.is(eq(attr(term, "status"), "active")).
+- `attr(...)` predicates can self-anchor unbound terms when `termDomains` includes
+  that term (for example via `rowVarDomain(...)`).
 - cardinality helpers count satisfied constraints:
   - atLeast(n, ...rules)
   - atMost(n, ...rules)

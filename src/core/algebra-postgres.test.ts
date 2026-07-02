@@ -480,6 +480,47 @@ describe("postgres algebra adapter", () => {
     expect(plan.params).toEqual(["d1", "read"])
   })
 
+  it("plans unanchored attr/attr joins when both terms have explicit domains", () => {
+    const actor = term<{ id: string; teamId: string }>()
+    const document = term<{ id: string; teamId: string }>()
+    const expression = eq(attr(actor, "teamId"), attr(document, "teamId"))
+    const rule = {
+      type: "unary" as const,
+      term: actor,
+      predicate: expression,
+    }
+
+    const plan = planPostgresPredicate(rule, {
+      relationMappings: [],
+      termDomains: [
+        {
+          term: actor,
+          table: "users",
+          valueColumn: "id",
+          columns: {
+            teamId: "team_id",
+          },
+        },
+        {
+          term: document,
+          table: "documents",
+          valueColumn: "id",
+          columns: {
+            teamId: "team_id",
+          },
+        },
+      ],
+      environment: {},
+    })
+
+    expect(plan.sql).toContain('FROM "users" "src1"')
+    expect(plan.sql).toContain('JOIN "documents" "src2" ON TRUE')
+    expect(plan.sql).toContain(
+      '"src1"."team_id" IS NOT DISTINCT FROM "src2"."team_id"',
+    )
+    expect(plan.params).toEqual([])
+  })
+
   it("fails fast for JavaScript unary predicates in postgres planning", () => {
     const document = term<{ id: string; workspaceAccess: string | null }>()
     const rule = and(document.is(d => d.workspaceAccess === "read"))

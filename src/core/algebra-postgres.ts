@@ -849,13 +849,6 @@ const resolveOperandSql = (
   }
 
   const termRoot = operand.term
-  const boundTermSql = builder.columns.get(termRoot)
-  if (!boundTermSql) {
-    throw new Error(
-      "postgres adapter cannot compile attribute predicate when the owning term is not anchored by relation or environment binding",
-    )
-  }
-
   const attributeDomain = state.termDomains.get(termRoot)
   if (!attributeDomain) {
     throw new Error(
@@ -863,6 +856,7 @@ const resolveOperandSql = (
     )
   }
 
+  let boundTermSql = builder.columns.get(termRoot)
   let alias = state.termAttributeAliases.get(termRoot)
   if (!alias) {
     alias = nextAlias(state, "src")
@@ -873,8 +867,20 @@ const resolveOperandSql = (
         : `JOIN ${tableSql} ON TRUE`,
     )
     const idSql = `${quoteIdentifier(alias)}.${quoteIdentifier(attributeDomain.valueColumn)}`
-    builder.whereClauses.push(`${idSql} IS NOT DISTINCT FROM ${boundTermSql}`)
+    if (boundTermSql) {
+      builder.whereClauses.push(`${idSql} IS NOT DISTINCT FROM ${boundTermSql}`)
+    } else {
+      builder.columns.set(termRoot, idSql)
+      boundTermSql = idSql
+    }
     appendStaticFilters(builder, state, alias, attributeDomain.staticFilters)
+    appendSourcePredicates(
+      builder,
+      state,
+      alias,
+      attributeDomain.predicates,
+      attributeDomain.orderings,
+    )
     state.termAttributeAliases.set(termRoot, alias)
   }
 

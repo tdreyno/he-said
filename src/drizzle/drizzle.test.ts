@@ -1,12 +1,17 @@
 import { pgTable, primaryKey, text } from "drizzle-orm/pg-core"
-import { relation, term } from ".."
+import { attr, relation, term } from ".."
 import { through } from "../rebac"
 import {
   associatesTable,
+  bindRowVar,
   drizzleExecutor,
   drizzleResourceType,
   fromFk,
   inColumn,
+  rowVar,
+  rowVarDomain,
+  rowVarEncoding,
+  via,
 } from "./index"
 
 describe("drizzle bridge", () => {
@@ -90,5 +95,61 @@ describe("drizzle bridge", () => {
     await expect(executor.query("SELECT 1", [])).resolves.toEqual({
       rows: [{ ok: true }],
     })
+  })
+
+  it("creates row variables with typed column accessors and planner metadata", () => {
+    const systems = pgTable("systems", { id: text("id").primaryKey() })
+    const branches = pgTable("branches", {
+      id: text("id").primaryKey(),
+      systemId: text("system_id").references(() => systems.id),
+    })
+    const branch = rowVar(branches)
+
+    expect(branch.$.systemId).toEqual(attr(branch, "systemId"))
+    expect(rowVarDomain(branch)).toEqual({
+      term: branch,
+      table: "branches",
+      valueColumn: "id",
+      columns: {
+        id: "id",
+        systemId: "system_id",
+      },
+    })
+
+    const env = bindRowVar(branch, { id: "branch-1", systemId: "system-1" })
+    expect(env[branch]).toBe("branch-1")
+    expect(
+      rowVarEncoding(branch).encode({ id: "branch-1", systemId: "system-1" }),
+    ).toBe("branch-1")
+    expect(rowVarEncoding(branch).encode("branch-2" as any)).toBe("branch-2")
+  })
+
+  it("requires object inputs when encoding composite-key row variables", () => {
+    const nodes = pgTable(
+      "canvas_nodes",
+      {
+        id: text("id").notNull(),
+        branchId: text("branch_id").notNull(),
+      },
+      table => [primaryKey({ columns: [table.id, table.branchId] })],
+    )
+    const node = rowVar(nodes)
+
+    expect(() => rowVarEncoding(node).encode("node-1" as any)).toThrow(
+      "rowVar encoding for composite primary keys requires an object containing the selected key property",
+    )
+    expect(
+      rowVarEncoding(node).encode({ id: "node-1", branchId: "branch-1" }),
+    ).toBe("node-1")
+  })
+
+  it("supports explicit via(...) wrappers for relation chains", () => {
+    const branch = term<{ id: string }>()
+    const system = term<{ id: string }>()
+    const branchInSystem = relation<{ id: string }, { id: string }>()
+
+    expect(through(via(branchInSystem))(branch, system)).toEqual(
+      through(branchInSystem)(branch, system),
+    )
   })
 })

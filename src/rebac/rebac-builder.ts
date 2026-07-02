@@ -44,14 +44,6 @@ const isReadScopeGrant = (value: unknown): value is ReadScopeGrant => {
   )
 }
 
-const isDenyGrant = (value: unknown): value is DenyGrant => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { kind?: unknown }).kind === "deny"
-  )
-}
-
 const normalizeLevel = (value: string): string => {
   const normalized = value.trim()
   if (normalized.length === 0) {
@@ -150,10 +142,6 @@ export type ReadScopeGrant = {
   kind: "read-scope"
 }
 
-export type DenyGrant = {
-  kind: "deny"
-}
-
 export const grant = {
   atLeast<Tier extends string>(tier: Tier): AtLeastGrant<Tier> {
     const normalized = tier.trim()
@@ -164,14 +152,6 @@ export const grant = {
   },
   readScope(): ReadScopeGrant {
     return { kind: "read-scope" }
-  },
-  /**
-   * Explicit "no base grant" — the compiled rule is always-false unless a
-   * `bypass` is configured on the policy, in which case it is exactly the
-   * bypass rule.
-   */
-  deny(): DenyGrant {
-    return { kind: "deny" }
   },
 }
 
@@ -247,7 +227,6 @@ export type GrantDefinition<
 > =
   | AtLeastGrant<Tier>
   | ReadScopeGrant
-  | DenyGrant
   | Rule
   | ((terms: GrantTerms<Actor, Resource, Scope, ReadScope>) => Rule)
 
@@ -277,15 +256,6 @@ export interface ScopedPolicyOptions<
     via: ScopePath<Scope, ReadScope>
     membership: Relation<Actor, ReadScope>
   }
-  /**
-   * OR'd into every compiled rule for every resource/action. Called once per
-   * resource type with that type's own resource term. Use `exists(resource)`
-   * to stay fail-closed on missing/cross-tenant rows. When the base grant is
-   * `grant.deny()`, the compiled rule is exactly this bypass rule.
-   */
-  bypass?: (
-    terms: GrantTerms<Actor, Resources[keyof Resources], Scope, ReadScope>,
-  ) => Rule
   overrides?: Partial<{
     [ResourceType in keyof Resources]: Partial<
       Record<
@@ -416,12 +386,6 @@ export const scopedPolicy = <
     )
     resourceTerms[resourceType] = resourceTerm
     const toScope = options.resources[resourceType]
-    const bypassRule = options.bypass?.({
-      actor: options.actor,
-      resource: resourceTerm,
-      scope: options.scope,
-      readScope: readScopeTerm,
-    })
 
     actions.forEach(action => {
       const override = options.overrides?.[resourceType]?.[action]
@@ -435,34 +399,36 @@ export const scopedPolicy = <
           Tier
         >)
       const base = toScope(resourceTerm, options.scope)
-      let requirement: RoleTierRequirement<Tier> | undefined
-      let grantRule: Rule | undefined
+      let entry: CompiledEntry<Tier>
 
-      if (isDenyGrant(definition)) {
-        grantRule = undefined
-      } else if (isAtLeastGrant<Tier>(definition)) {
-        requirement = options.membership.tiers.source(
+      if (isAtLeastGrant<Tier>(definition)) {
+        const requirement = options.membership.tiers.source(
           options.membership.roleColumn,
           definition.tier,
         )
-        grantRule = and(
-          base,
-          options.membership.relation(options.actor, options.scope, {
-            predicates: [requirement.predicate],
-            orderings: [requirement.ordering],
-          }),
-        )
+        entry = {
+          requirement,
+          rule: and(
+            base,
+            options.membership.relation(options.actor, options.scope, {
+              predicates: [requirement.predicate],
+              orderings: [requirement.ordering],
+            }),
+          ),
+        }
       } else if (isReadScopeGrant(definition)) {
         if (!options.readScope || !readScopeTerm) {
           throw new Error(
             `grant.readScope() requires readScope config (resource=${String(resourceType)}, action=${action})`,
           )
         }
-        grantRule = and(
-          base,
-          options.readScope.via(options.scope, readScopeTerm),
-          options.readScope.membership(options.actor, readScopeTerm),
-        )
+        entry = {
+          rule: and(
+            base,
+            options.readScope.via(options.scope, readScopeTerm),
+            options.readScope.membership(options.actor, readScopeTerm),
+          ),
+        }
       } else {
         const customRule =
           typeof definition === "function"
@@ -480,16 +446,12 @@ export const scopedPolicy = <
           )
         }
 
-        grantRule = and(base, customRule)
+        entry = {
+          rule: and(base, customRule),
+        }
       }
 
-      const rule = bypassRule
-        ? grantRule
-          ? or(bypassRule, grantRule)
-          : bypassRule
-        : (grantRule ?? or())
-
-      compiled.set(resolveKey(action, resourceType), { requirement, rule })
+      compiled.set(resolveKey(action, resourceType), entry)
     })
   })
 

@@ -5,7 +5,6 @@ export {
   scopedPolicy,
   through,
   type AtLeastGrant,
-  type DenyGrant,
   type GrantDefinition,
   type ReadScopeGrant,
   type RoleTierRequirement,

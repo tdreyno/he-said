@@ -104,7 +104,6 @@ Postgres relation/domain sources support:
 - `roleTiers(...levels)`
 - `grant.atLeast(level)`
 - `grant.readScope()`
-- `grant.deny()`
 - `through(relA, relB, ...)`
 - `either(pathA, pathB, ...)`
 - `scopedPolicy(config)`
@@ -116,11 +115,6 @@ algebra rules and returns:
 - `roleRequirementFor(action, resourceType)`
 - `sourceFor(action, resourceType, source)` (optional source pushdown mirror for tier predicates/orderings)
 - `can(...)` when initialized with `evaluator`
-
-An optional `bypass` option on `scopedPolicy` is OR'd into every compiled
-rule (per resource/action); combined with `grant.deny()` it expresses
-"no base grant unless bypassed" (e.g. an app-admin override) without any
-wrapping outside the facade.
 
 ## Key Types
 

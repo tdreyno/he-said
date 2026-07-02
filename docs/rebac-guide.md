@@ -75,36 +75,3 @@ grants: {
   read: ({ resource, actor }) => authoredBy(resource, actor),
 }
 ```
-
-## Denied Actions and Admin Bypass
-
-Some actions (e.g. `manage`) have no base grant at all — they exist only for
-an admin bypass or an explicit per-resource override. `grant.deny()` compiles
-to an always-false rule, and an optional `bypass` is OR'd into _every_
-compiled rule for every resource/action:
-
-```ts
-import { and, exists, factIsTrue, fact } from "@tdreyno/he-said"
-
-const isAppAdmin = fact<boolean>()
-
-const policy = scopedPolicy({
-  ...,
-  grants: {
-    read: grant.atLeast("viewer"),
-    update: grant.atLeast("editor"),
-    manage: grant.deny(), // no base grant — admin-only, or nobody's
-  },
-  overrides: {
-    System: { manage: grant.atLeast("editor") }, // supersedes the deny for System
-  },
-  // OR'd into every compiled rule; `exists(resource)` keeps it fail-closed
-  // on missing/cross-tenant ids.
-  bypass: ({ resource }) => and(factIsTrue(isAppAdmin), exists(resource)),
-})
-```
-
-- `bypass` is called once per resource type with `{ actor, resource, scope, readScope }`.
-- With a normal grant, the compiled rule becomes `or(bypassRule, grantRule)`.
-- With `grant.deny()`, the compiled rule is exactly `bypassRule` (or
-  always-false if `bypass` isn't configured).

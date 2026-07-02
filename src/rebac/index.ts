@@ -13,3 +13,9 @@ export {
   type ScopedPolicyOptions,
   type ScopePath,
 } from "./rebac-builder"
+export {
+  resourceType,
+  isResourceType,
+  type ResourceType,
+  type ResourceTypeOptions,
+} from "./resource-type"

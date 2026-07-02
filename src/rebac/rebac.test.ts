@@ -1,12 +1,23 @@
 import {
   createInMemoryAdapter,
   evaluator,
+  factIsTrue,
+  fact,
+  and,
   relation,
   term,
   type InMemoryRelationFacts,
   type Rule,
 } from ".."
-import { either, grant, roleTiers, scopedPolicy, through } from "./index"
+import {
+  either,
+  grant,
+  roleTiers,
+  scopedPolicy,
+  through,
+  resourceType,
+  isResourceType,
+} from "./index"
 
 type User = string
 type Team = string
@@ -304,5 +315,283 @@ describe("rebac facade", () => {
         [policy.resourceTerms.File]: "file-1",
       }),
     ).resolves.toBe(true)
+  })
+})
+
+describe("resourceType", () => {
+  type User = string
+  type Team = string
+  type Node = { id: string }
+  type Branch = string
+
+  it("isResourceType identifies resourceType objects", () => {
+    const nodeInTeam = relation<Node, Team>()
+    const NodeResource = resourceType<Node, Team>({
+      table: "nodes",
+      owner: through(nodeInTeam),
+    })
+    expect(isResourceType(NodeResource)).toBe(true)
+    expect(isResourceType(through(nodeInTeam))).toBe(false)
+    expect(isResourceType(null)).toBe(false)
+    expect(isResourceType({ _kind: "not-resource-type" })).toBe(false)
+  })
+
+  it("stores table and key metadata", () => {
+    const nodeInTeam = relation<Node, Team>()
+    const NodeResource = resourceType<Node, Team>({
+      table: "nodes",
+      key: "node_id",
+      owner: through(nodeInTeam),
+    })
+    expect(NodeResource.table).toBe("nodes")
+    expect(NodeResource.key).toBe("node_id")
+  })
+
+  it("defaults key to 'id'", () => {
+    const nodeInTeam = relation<Node, Team>()
+    const NodeResource = resourceType<Node, Team>({
+      table: "nodes",
+      owner: through(nodeInTeam),
+    })
+    expect(NodeResource.key).toBe("id")
+  })
+
+  it("exists() returns a Rule referencing the resource term", async () => {
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const NodeResource = resourceType<NodeId, Team>({
+      owner: through(nodeInTeam),
+    })
+    const adapter = createInMemoryAdapter({
+      relations: [{ relation: nodeInTeam, pairs: [["n1", "team-1"]] }],
+      domain: ["n1", "team-1"],
+    })
+    const runtime = evaluator(adapter, { evaluatorContext: null })
+    const existsRule = NodeResource.exists()
+
+    await expect(
+      runtime.evaluate(existsRule, { [NodeResource.term]: "n1" }),
+    ).resolves.toBe(true)
+
+    await expect(
+      runtime.evaluate(existsRule, { [NodeResource.term]: "missing" }),
+    ).resolves.toBe(false)
+  })
+
+  it("ownedBy() returns a Rule asserting ownership", async () => {
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const scopeTerm = term<Team>()
+    const NodeResource = resourceType<NodeId, Team>({
+      owner: through(nodeInTeam),
+    })
+    const adapter = createInMemoryAdapter({
+      relations: [{ relation: nodeInTeam, pairs: [["n1", "team-1"]] }],
+      domain: ["n1", "team-1"],
+    })
+    const runtime = evaluator(adapter, { evaluatorContext: null })
+    const ownerRule = NodeResource.ownedBy(scopeTerm)
+
+    await expect(
+      runtime.evaluate(ownerRule, {
+        [NodeResource.term]: "n1",
+        [scopeTerm]: "team-1",
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      runtime.evaluate(ownerRule, {
+        [NodeResource.term]: "n1",
+        [scopeTerm]: "team-2",
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("bind() maps the resource term and context terms", () => {
+    const nodeInTeam = relation<string, Team>()
+    const branchTerm = term<Branch>()
+    const NodeResource = resourceType<
+      string,
+      Team,
+      { branchId: typeof branchTerm }
+    >({
+      context: { branchId: branchTerm },
+      owner: through(nodeInTeam),
+    })
+    // bind with context: the resource value plus an extra context key
+    // We need to pass an object since context extraction uses key lookup
+    const env2 = NodeResource.bind({ branchId: "branch-1" } as any)
+    expect(env2[NodeResource.term as unknown as symbol]).toEqual({
+      branchId: "branch-1",
+    })
+    expect(env2[branchTerm as unknown as symbol]).toBe("branch-1")
+  })
+
+  it("scopedPolicy accepts ResourceType in resources", async () => {
+    const actor = term<User>()
+    const scope = term<Team>()
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const memberOfTeam = relation<User, Team>()
+
+    const NodeResource = resourceType<NodeId, Team>({
+      table: "nodes",
+      owner: through(nodeInTeam),
+    })
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: nodeInTeam, pairs: [["n1", "team-1"]] },
+        {
+          relation: memberOfTeam,
+          pairs: [
+            ["alice", "team-1"],
+            ["bob", "team-1"],
+          ],
+          rows: [
+            { left: "alice", right: "team-1", columns: { role: "editor" } },
+            { left: "bob", right: "team-1", columns: { role: "viewer" } },
+          ],
+        },
+      ],
+      domain: ["n1", "team-1", "alice", "bob"],
+    })
+
+    const policy = scopedPolicy({
+      actor,
+      scope,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: { Node: NodeResource },
+      grants: { update: grant.atLeast("editor") },
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    // policy.resourceTerms.Node should be the same symbol as NodeResource.term
+    expect(policy.resourceTerms.Node).toBe(NodeResource.term)
+
+    await expect(policy.can("alice", "update", "Node", "n1")).resolves.toBe(
+      true,
+    )
+    await expect(policy.can("bob", "update", "Node", "n1")).resolves.toBe(false)
+  })
+
+  it("bypass grants access regardless of membership for ResourceType resources", async () => {
+    const actor = term<User>()
+    const scope = term<Team>()
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const memberOfTeam = relation<User, Team>()
+    const isAdminFact = fact<boolean>()
+
+    const NodeResource = resourceType<NodeId, Team>({
+      owner: through(nodeInTeam),
+    })
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: nodeInTeam, pairs: [["n1", "team-1"]] },
+        {
+          relation: memberOfTeam,
+          pairs: [["alice", "team-1"]],
+          rows: [
+            { left: "alice", right: "team-1", columns: { role: "viewer" } },
+          ],
+        },
+      ],
+      domain: ["n1", "team-1", "alice", "admin-user"],
+    })
+
+    const policy = scopedPolicy({
+      actor,
+      scope,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: { Node: NodeResource },
+      grants: { update: grant.atLeast("editor") },
+      bypass: ({ resource }) => and(factIsTrue(isAdminFact), resource.exists()),
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    // alice is only a viewer — bypass is false (isAdmin=false) so she is denied
+    await expect(
+      policy.can("alice", "update", "Node", "n1", {
+        facts: { [isAdminFact]: false },
+      }),
+    ).resolves.toBe(false)
+
+    // admin-user is not a member at all, but bypass grants access when isAdmin=true
+    await expect(
+      policy.can("admin-user", "update", "Node", "n1", {
+        facts: { [isAdminFact]: true },
+      }),
+    ).resolves.toBe(true)
+
+    // admin-user with isAdmin=false is still denied
+    await expect(
+      policy.can("admin-user", "update", "Node", "n1", {
+        facts: { [isAdminFact]: false },
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it("bypass does not apply to bare ScopePath resources", async () => {
+    const actor = term<User>()
+    const scope = term<Team>()
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const memberOfTeam = relation<User, Team>()
+    const isAdminFact = fact<boolean>()
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: nodeInTeam, pairs: [["n1", "team-1"]] },
+        {
+          relation: memberOfTeam,
+          pairs: [["alice", "team-1"]],
+          rows: [
+            { left: "alice", right: "team-1", columns: { role: "viewer" } },
+          ],
+        },
+      ],
+      domain: ["n1", "team-1", "alice", "admin-user"],
+    })
+
+    // resources.Node is a bare ScopePath — bypass should NOT apply to it
+    const policy = scopedPolicy<
+      User,
+      Team,
+      { Node: NodeId },
+      "update",
+      "viewer" | "editor"
+    >({
+      actor,
+      scope,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: {
+        Node: through(nodeInTeam),
+      },
+      grants: { update: grant.atLeast("editor") },
+      // bypass is provided but Node is a ScopePath so it won't be called
+      bypass: () => factIsTrue(isAdminFact),
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    // admin-user is not a team member — bypass doesn't fire for ScopePath resources
+    await expect(
+      policy.can("admin-user", "update", "Node", "n1", {
+        facts: { [isAdminFact]: true },
+      }),
+    ).resolves.toBe(false)
   })
 })

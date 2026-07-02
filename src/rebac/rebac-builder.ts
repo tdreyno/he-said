@@ -11,6 +11,7 @@ import {
   type SourcePredicate,
   type Term,
 } from "../core/algebra"
+import { isResourceType, type ResourceType } from "./resource-type"
 
 type AnyScopePath = ScopePath<any, any>
 
@@ -246,7 +247,9 @@ export interface ScopedPolicyOptions<
     tiers: RoleTiers<Tier>
   }
   resources: {
-    [ResourceType in keyof Resources]: ScopePath<Resources[ResourceType], Scope>
+    [K in keyof Resources]:
+      | ScopePath<Resources[K], Scope>
+      | ResourceType<Resources[K], Scope, any>
   }
   grants: Record<
     Action,
@@ -264,6 +267,15 @@ export interface ScopedPolicyOptions<
       >
     >
   }>
+  /**
+   * Optional bypass rule evaluated before the normal per-action rule.
+   * When it evaluates to `true`, access is granted regardless of membership.
+   * Only applied for resources declared as `resourceType(...)` (requires
+   * `resource.exists()` to be meaningful).
+   */
+  bypass?: (context: {
+    resource: Pick<ResourceType<any, any, any>, "exists" | "ownedBy" | "term">
+  }) => Rule
   evaluator?: EvaluatorInstance<Environment>
 }
 
@@ -381,11 +393,21 @@ export const scopedPolicy = <
     `${String(resourceType)}::${action}`
 
   resourceTypes.forEach(resourceType => {
-    const resourceTerm = term<Resources[typeof resourceType]>(
-      `rebac.resource.${String(resourceType)}`,
-    )
+    const entry = options.resources[resourceType]
+    let resourceTerm: Term<Resources[typeof resourceType]>
+    let toScope: ScopePath<Resources[typeof resourceType], Scope>
+
+    if (isResourceType(entry)) {
+      resourceTerm = entry.term as Term<Resources[typeof resourceType]>
+      toScope = entry._owner as ScopePath<Resources[typeof resourceType], Scope>
+    } else {
+      resourceTerm = term<Resources[typeof resourceType]>(
+        `rebac.resource.${String(resourceType)}`,
+      )
+      toScope = entry as ScopePath<Resources[typeof resourceType], Scope>
+    }
+
     resourceTerms[resourceType] = resourceTerm
-    const toScope = options.resources[resourceType]
 
     actions.forEach(action => {
       const override = options.overrides?.[resourceType]?.[action]
@@ -399,14 +421,14 @@ export const scopedPolicy = <
           Tier
         >)
       const base = toScope(resourceTerm, options.scope)
-      let entry: CompiledEntry<Tier>
+      let compiled_entry: CompiledEntry<Tier>
 
       if (isAtLeastGrant<Tier>(definition)) {
         const requirement = options.membership.tiers.source(
           options.membership.roleColumn,
           definition.tier,
         )
-        entry = {
+        compiled_entry = {
           requirement,
           rule: and(
             base,
@@ -422,7 +444,7 @@ export const scopedPolicy = <
             `grant.readScope() requires readScope config (resource=${String(resourceType)}, action=${action})`,
           )
         }
-        entry = {
+        compiled_entry = {
           rule: and(
             base,
             options.readScope.via(options.scope, readScopeTerm),
@@ -446,12 +468,23 @@ export const scopedPolicy = <
           )
         }
 
-        entry = {
+        compiled_entry = {
           rule: and(base, customRule),
         }
       }
 
-      compiled.set(resolveKey(action, resourceType), entry)
+      // Apply bypass: when the resource entry is a ResourceType and a bypass
+      // function is provided, OR it in so that admin-level rules can short-circuit
+      // the normal ownership check.
+      if (options.bypass && isResourceType(entry)) {
+        const bypassRule = options.bypass({ resource: entry })
+        compiled_entry = {
+          ...compiled_entry,
+          rule: or(bypassRule, compiled_entry.rule),
+        }
+      }
+
+      compiled.set(resolveKey(action, resourceType), compiled_entry)
     })
   })
 
@@ -502,10 +535,14 @@ export const scopedPolicy = <
           "scopedPolicy.can requires options.evaluator; use ruleFor(...) when evaluating manually",
         )
       }
+      const resourceEntry = options.resources[resourceType]
+      const resourceEnv: Environment = isResourceType(resourceEntry)
+        ? resourceEntry.bind(resource as any)
+        : { [resourceTerms[resourceType]]: resource }
       const input: Environment = {
         ...(runtimeOptions?.environment ?? {}),
         [options.actor]: actor,
-        [resourceTerms[resourceType]]: resource,
+        ...resourceEnv,
       }
       const evaluationInput: EvaluationInput<Environment> =
         runtimeOptions?.facts

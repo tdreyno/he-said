@@ -4,3 +4,5 @@ coverage
 .turbo
 .scannerwork
 .env
+.DS_Store
+*.pem

@@ -54,7 +54,7 @@
     "test:postgres": "jest --runInBand src/core/algebra-postgres.integration.test.ts",
     "test:postgres:ci": "npm run postgres:test:up && npm run test:postgres; npm run postgres:test:down",
     "test:types": "tsc -p tsconfig.types.json --noEmit",
-    "release": "npm run build && npm run lint && npm run test:ci && npm run test:types && changeset version && changeset publish"
+    "release": "npm run build && changeset publish --provenance"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [

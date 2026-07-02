@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/productivity/grill-me/SKILL.md",
       "computedHash": "f321507f77702a54af1db66549ec1685fc625390d06c57d7949cdcda8eb1b5c7"
+    },
+    "he-said-guide": {
+      "source": "tdreyno/he-said",
+      "sourceType": "github",
+      "skillPath": "skills/he-said/SKILL.md",
+      "computedHash": "b267da30f99018ea28b21267c24307cec5e6c30d7ce28290ee8daf0c541d5997"
     }
   }
 }

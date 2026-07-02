@@ -45,6 +45,20 @@ For local MCP-driven Sonar checks in VS Code, use the SonarQube MCP tools agains
 npm install @tdreyno/he-said
 ```
 
+## Agent Skills (skills.sh)
+
+This repo ships first-party skills to help consumer agents use he-said correctly:
+
+- `he-said-guide`
+
+Install from this repository with skills.sh:
+
+```bash
+npx skills add tdreyno/he-said
+```
+
+Then use `npx skills list` to confirm they were installed for your agent environment.
+
 ## Quick Start
 
 ```ts

@@ -39,6 +39,13 @@ Returns an EvaluatorInstance with:
 
 - evaluate(rule, environmentOrInput): Promise<boolean>
 - evaluateWithProof(rule, environmentOrInput): Promise<EvaluationProof>
+  - EvaluationProof.ok: boolean result
+  - EvaluationProof.failing?: first unsatisfied node when denied
+    - kind: failing node category
+    - path: deterministic AST path (for stable assertions/logging)
+    - reason: concise failure reason
+    - relationId?: set for relation-node failures
+    - sql?/paramCount?: available for Postgres only when `includeFailingNodeSql` is enabled
 - filter(rule, { environment, term, candidates? }): Promise<ReadonlyArray<T>>
 
 `environmentOrInput` accepts either a plain environment object, or an object with

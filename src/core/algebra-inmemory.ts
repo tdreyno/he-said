@@ -2,6 +2,7 @@ import {
   type AttributeAccessor,
   buildEvaluationProofDetails,
   type Environment,
+  type EvaluationFailingNode,
   type EvaluationProof,
   type EvaluatorAdapter,
   getPredicateExpressionTerms,
@@ -891,6 +892,217 @@ const solveRule = async (
   }
 }
 
+const failingKindForRule = (rule: Rule): EvaluationFailingNode["kind"] => {
+  switch (rule.type) {
+    case "relation":
+    case "eq-term":
+    case "eq-value":
+    case "derives":
+    case "not":
+    case "forall":
+    case "or":
+    case "term":
+    case "unary":
+      return rule.type
+    case "given":
+      return "given-context"
+    case "ref":
+      return "ref"
+    default:
+      return "unknown"
+  }
+}
+
+const failingReasonForRule = (rule: Rule): string => {
+  switch (rule.type) {
+    case "relation":
+      return "no matching relation facts"
+    case "eq-term":
+      return "term equality could not be satisfied"
+    case "eq-value":
+      return "term did not match expected value"
+    case "derives":
+      return "derived terms did not unify"
+    case "not":
+      return "negated child matched"
+    case "or":
+      return "no branch matched"
+    case "forall":
+      return "quantified candidate failed child rule"
+    case "given":
+      return "given context did not match"
+    case "ref":
+      return "referenced rule did not match"
+    case "term":
+      return "term has no candidate bindings"
+    case "unary":
+      return "unary predicate failed"
+    default:
+      return "rule did not match"
+  }
+}
+
+const buildFailingNode = (rule: Rule, path: string): EvaluationFailingNode => {
+  return {
+    kind: failingKindForRule(rule),
+    path,
+    reason: failingReasonForRule(rule),
+    relationId: rule.type === "relation" ? rule.relationId : undefined,
+  }
+}
+
+const findFirstFailingNode = async (
+  rule: Rule,
+  environments: Array<Environment>,
+  state: SolverState,
+  path: string,
+): Promise<EvaluationFailingNode | undefined> => {
+  const branch = await solveRule(rule, environments, state)
+  if (branch.length > 0) {
+    return undefined
+  }
+
+  switch (rule.type) {
+    case "and": {
+      let current = environments
+      for (let index = 0; index < rule.children.length; index += 1) {
+        const child = rule.children[index]!
+        const childPath = `${path}.and[${index}]`
+        const childBranch = await solveRule(child, current, state)
+        if (childBranch.length === 0) {
+          const nested = await findFirstFailingNode(
+            child,
+            current,
+            state,
+            childPath,
+          )
+          return nested ?? buildFailingNode(child, childPath)
+        }
+        current = childBranch
+      }
+      return buildFailingNode(rule, path)
+    }
+    case "or": {
+      for (let index = 0; index < rule.children.length; index += 1) {
+        const child = rule.children[index]!
+        const childPath = `${path}.or[${index}]`
+        const nested = await findFirstFailingNode(
+          child,
+          environments,
+          state,
+          childPath,
+        )
+        if (nested) {
+          return nested
+        }
+      }
+      return buildFailingNode(rule, path)
+    }
+    case "ref": {
+      const definition = state.definitions.get(rule.name)
+      if (!definition) {
+        throw new Error(`unknown ref "${rule.name}"`)
+      }
+      return (
+        (await findFirstFailingNode(
+          definition,
+          environments,
+          state,
+          `${path}.ref(${rule.name})`,
+        )) ?? buildFailingNode(rule, path)
+      )
+    }
+    case "memo":
+      return findFirstFailingNode(
+        rule.child,
+        environments,
+        state,
+        `${path}.memo`,
+      )
+    case "select":
+      return findFirstFailingNode(
+        rule.child,
+        environments,
+        state,
+        `${path}.select`,
+      )
+    case "distinct":
+      return findFirstFailingNode(
+        rule.child,
+        environments,
+        state,
+        `${path}.distinct`,
+      )
+    case "not": {
+      const childBranch = await solveRule(rule.child, environments, state)
+      if (childBranch.length > 0) {
+        return buildFailingNode(rule, path)
+      }
+      return undefined
+    }
+    case "given": {
+      const contextEnvironments = await solveRule(
+        rule.context,
+        environments,
+        state,
+      )
+      if (contextEnvironments.length === 0) {
+        return (
+          (await findFirstFailingNode(
+            rule.context,
+            environments,
+            state,
+            `${path}.context`,
+          )) ?? buildFailingNode(rule, path)
+        )
+      }
+      return findFirstFailingNode(
+        rule.rule,
+        contextEnvironments,
+        state,
+        `${path}.rule`,
+      )
+    }
+    case "forall": {
+      for (const environment of environments) {
+        const candidates = collectCandidates(
+          rule.term,
+          environment,
+          state.facts,
+          state.analysis,
+          state.globalDomain,
+        )
+        for (const candidate of candidates) {
+          const next = bindValue(environment, rule.term, candidate)
+          const childBranch = await solveRule(rule.child, [next], state)
+          if (childBranch.length === 0) {
+            return (
+              (await findFirstFailingNode(
+                rule.child,
+                [next],
+                state,
+                `${path}.forall`,
+              )) ?? buildFailingNode(rule, path)
+            )
+          }
+        }
+      }
+      return buildFailingNode(rule, path)
+    }
+    case "relation":
+    case "unary":
+    case "term":
+    case "eq-term":
+    case "eq-value":
+    case "derives":
+      return buildFailingNode(rule, path)
+    default: {
+      const exhaustive: never = rule
+      return exhaustive
+    }
+  }
+}
+
 const validateStratifiedNegationInternal = (rule: Rule): void => {
   const definitions = collectDefinitions(rule)
   validateRefNames(rule, definitions)
@@ -1140,10 +1352,23 @@ export const createInMemoryAdapter = <
       }
 
       const matches = await solveRule(rule, [environment], state)
+      const probeState: SolverState = {
+        facts,
+        analysis,
+        definitions,
+        globalDomain,
+        hashEnvironment,
+        memoCache: new Map(),
+      }
+      const failing =
+        matches.length > 0
+          ? undefined
+          : await findFirstFailingNode(rule, [environment], probeState, "root")
 
       const proof: EvaluationProof = {
         ok: matches.length > 0,
         rule,
+        failing,
         details: {
           ...buildEvaluationProofDetails(rule, matches.length > 0),
           matchCount: matches.length,

@@ -1089,7 +1089,31 @@ export const given = (
 export interface EvaluationProof {
   readonly ok: boolean
   readonly rule: Rule
+  readonly failing?: EvaluationFailingNode
   readonly details?: EvaluationProofDetails
+}
+
+export type EvaluationFailingNodeKind =
+  | "relation"
+  | "eq-term"
+  | "eq-value"
+  | "derives"
+  | "not"
+  | "forall"
+  | "or"
+  | "given-context"
+  | "ref"
+  | "term"
+  | "unary"
+  | "unknown"
+
+export interface EvaluationFailingNode {
+  readonly kind: EvaluationFailingNodeKind
+  readonly path: string
+  readonly reason: string
+  readonly relationId?: symbol
+  readonly sql?: string
+  readonly paramCount?: number
 }
 
 export interface RuleBranchOutcome {

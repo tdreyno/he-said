@@ -1,6 +1,7 @@
 import {
   type AttributeAccessor,
   type Environment,
+  type EvaluationFailingNode,
   type EvaluationProof,
   type EvaluatorAdapter,
   type EvaluatorPrepareOptions,
@@ -167,6 +168,7 @@ export interface PostgresAdapterOptions<
     evaluatorContext: EvaluatorContext,
   ) => Readonly<Record<string, unknown>>
   explainQuery?: boolean
+  includeFailingNodeSql?: boolean
 }
 
 type PreparedPostgresRelationSource = {
@@ -1414,17 +1416,82 @@ const buildProofDetails = (
   }
 }
 
+const failingKindForRule = (rule: Rule): EvaluationFailingNode["kind"] => {
+  switch (rule.type) {
+    case "relation":
+    case "eq-term":
+    case "eq-value":
+    case "derives":
+    case "not":
+    case "forall":
+    case "or":
+    case "term":
+    case "unary":
+      return rule.type
+    case "given":
+      return "given-context"
+    case "ref":
+      return "ref"
+    default:
+      return "unknown"
+  }
+}
+
+const failingReasonForRule = (rule: Rule): string => {
+  switch (rule.type) {
+    case "relation":
+      return "no matching rows"
+    case "eq-term":
+      return "term equality could not be satisfied"
+    case "eq-value":
+      return "term did not match expected value"
+    case "derives":
+      return "derived terms did not unify"
+    case "not":
+      return "negated child matched"
+    case "or":
+      return "no branch matched"
+    case "forall":
+      return "quantified candidate failed child rule"
+    case "given":
+      return "given context did not match"
+    case "ref":
+      return "referenced rule did not match"
+    case "term":
+      return "term has no candidate bindings"
+    case "unary":
+      return "unary predicate is unsupported in postgres adapter"
+    default:
+      return "rule did not match"
+  }
+}
+
+const buildFailingNode = (
+  rule: Rule,
+  path: string,
+  options: { includeSql: boolean; plan?: PlannedPostgresRule },
+): EvaluationFailingNode => {
+  return {
+    kind: failingKindForRule(rule),
+    path,
+    reason: failingReasonForRule(rule),
+    relationId: rule.type === "relation" ? rule.relationId : undefined,
+    sql: options.includeSql ? options.plan?.sql : undefined,
+    paramCount: options.includeSql ? options.plan?.params.length : undefined,
+  }
+}
+
 export const createPostgresAdapter = <
   Env extends Environment = Environment,
   EvaluatorContext = unknown,
 >(
   options: PostgresAdapterOptions<Env, EvaluatorContext>,
 ): EvaluatorAdapter<Env, EvaluatorContext> => {
-  const evaluateWithMappings = async (
+  const probeRule = async (
     rule: Rule,
     environment: Readonly<Env>,
     relationMappings: ReadonlyArray<PlannerRelationMapping>,
-  ): Promise<boolean> => {
+  ): Promise<{ ok: boolean; plan: PlannedPostgresRule }> => {
     const plan = planPostgresRule(rule, {
       relationMappings,
       termDomains: options.termDomains,
@@ -1435,8 +1502,181 @@ export const createPostgresAdapter = <
       plan.sql,
       plan.params,
     )
+    return {
+      ok: result.rows[0]?.ok === true,
+      plan,
+    }
+  }
 
-    return result.rows[0]?.ok === true
+  const evaluateWithMappings = async (
+    rule: Rule,
+    environment: Readonly<Env>,
+    relationMappings: ReadonlyArray<PlannerRelationMapping>,
+  ): Promise<boolean> => {
+    const result = await probeRule(rule, environment, relationMappings)
+    return result.ok
+  }
+
+  const findFirstFailingNode = async (
+    rule: Rule,
+    environment: Readonly<Env>,
+    path: string,
+    definitions: ReadonlyMap<string, Rule>,
+    relationMappings: ReadonlyArray<PlannerRelationMapping>,
+  ): Promise<EvaluationFailingNode | undefined> => {
+    switch (rule.type) {
+      case "ref": {
+        const definition = definitions.get(rule.name)
+        if (!definition) {
+          throw new Error(`unknown ref "${rule.name}"`)
+        }
+        return findFirstFailingNode(
+          definition,
+          environment,
+          `${path}.ref(${rule.name})`,
+          definitions,
+          relationMappings,
+        )
+      }
+      case "memo":
+        return findFirstFailingNode(
+          rule.child,
+          environment,
+          `${path}.memo`,
+          definitions,
+          relationMappings,
+        )
+      case "select":
+        return findFirstFailingNode(
+          rule.child,
+          environment,
+          `${path}.select`,
+          definitions,
+          relationMappings,
+        )
+      case "distinct":
+        return findFirstFailingNode(
+          rule.child,
+          environment,
+          `${path}.distinct`,
+          definitions,
+          relationMappings,
+        )
+      default:
+        break
+    }
+
+    const current = await probeRule(rule, environment, relationMappings)
+    if (current.ok) {
+      return undefined
+    }
+
+    switch (rule.type) {
+      case "and": {
+        const prefix: Array<Rule> = []
+        for (let index = 0; index < rule.children.length; index += 1) {
+          const child = rule.children[index]!
+          const childPath = `${path}.and[${index}]`
+          prefix.push(child)
+          const prefixRule: Rule =
+            prefix.length === 1
+              ? prefix[0]!
+              : {
+                  type: "and",
+                  children: [...prefix],
+                }
+          const prefixResult = await probeRule(
+            prefixRule,
+            environment,
+            relationMappings,
+          )
+          if (!prefixResult.ok) {
+            return (
+              (await findFirstFailingNode(
+                child,
+                environment,
+                childPath,
+                definitions,
+                relationMappings,
+              )) ??
+              buildFailingNode(child, childPath, {
+                includeSql: options.includeFailingNodeSql === true,
+                plan: prefixResult.plan,
+              })
+            )
+          }
+        }
+        return buildFailingNode(rule, path, {
+          includeSql: options.includeFailingNodeSql === true,
+          plan: current.plan,
+        })
+      }
+      case "or": {
+        for (let index = 0; index < rule.children.length; index += 1) {
+          const child = rule.children[index]!
+          const childPath = `${path}.or[${index}]`
+          const nested = await findFirstFailingNode(
+            child,
+            environment,
+            childPath,
+            definitions,
+            relationMappings,
+          )
+          if (nested) {
+            return nested
+          }
+        }
+        return buildFailingNode(rule, path, {
+          includeSql: options.includeFailingNodeSql === true,
+          plan: current.plan,
+        })
+      }
+      case "given": {
+        const contextResult = await probeRule(
+          rule.context,
+          environment,
+          relationMappings,
+        )
+        if (!contextResult.ok) {
+          return (
+            (await findFirstFailingNode(
+              rule.context,
+              environment,
+              `${path}.context`,
+              definitions,
+              relationMappings,
+            )) ??
+            buildFailingNode(rule, path, {
+              includeSql: options.includeFailingNodeSql === true,
+              plan: contextResult.plan,
+            })
+          )
+        }
+        return findFirstFailingNode(
+          rule.rule,
+          environment,
+          `${path}.rule`,
+          definitions,
+          relationMappings,
+        )
+      }
+      case "relation":
+      case "eq-term":
+      case "eq-value":
+      case "not":
+      case "forall":
+      case "term":
+      case "unary":
+      case "derives":
+        return buildFailingNode(rule, path, {
+          includeSql: options.includeFailingNodeSql === true,
+          plan: current.plan,
+        })
+      default: {
+        const exhaustive: never = rule
+        return exhaustive
+      }
+    }
   }
 
   const evaluateWithProofAndMappings = async (
@@ -1455,6 +1695,16 @@ export const createPostgresAdapter = <
       plan.params,
     )
     const ok = result.rows[0]?.ok === true
+    const definitions = collectDefinitions(rule)
+    const failing = ok
+      ? undefined
+      : await findFirstFailingNode(
+          rule,
+          environment,
+          "root",
+          definitions,
+          relationMappings,
+        )
 
     let explainRows: ReadonlyArray<Record<string, unknown>> | undefined
     if (options.explainQuery) {
@@ -1468,6 +1718,7 @@ export const createPostgresAdapter = <
     const proof: EvaluationProof = {
       ok,
       rule,
+      failing,
       details: buildProofDetails(
         plan,
         ok,

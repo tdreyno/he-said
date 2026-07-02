@@ -91,6 +91,7 @@ evaluateWithProof returns an EvaluationProof object.
 
 - ok indicates whether at least one environment matched.
 - rule includes the evaluated rule tree.
+- failing (when ok is false) identifies the first unsatisfied node using a deterministic AST path.
 - details is adapter-specific metadata.
 
 ## Core Algebra Enhancements

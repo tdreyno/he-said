@@ -55,3 +55,9 @@ In-memory proofs include details that help debug rule execution:
 - distinctApplied
 - memoHits
 - memoMisses
+
+When `proof.ok` is false, proofs also include `proof.failing` with:
+
+- kind (relation / eq-value / eq-term / etc.)
+- path (deterministic AST location, for example `root.and[0]`)
+- reason (human-readable failure reason)

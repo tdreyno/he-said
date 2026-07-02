@@ -1,6 +1,7 @@
 import {
   and,
   attr,
+  createInMemoryAdapter,
   createPostgresAdapter,
   eq,
   evaluator,
@@ -570,6 +571,147 @@ describe("postgres algebra adapter", () => {
         ]),
       }),
     )
+  })
+
+  it("returns the first failing node in deterministic AST order", async () => {
+    const actor = term<{ id: string }>()
+    const role = term<string>()
+    const userHasWorkspaceRole = relation<{ id: string }, string>()
+
+    const adapter = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: userHasWorkspaceRole,
+          source: {
+            kind: "join-table",
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "role",
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      queryExecutor: {
+        query: async <Row extends Record<string, unknown>>() => {
+          return queryResult([{ ok: false } as unknown as Row])
+        },
+      },
+    })
+
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const proof = await instance.evaluateWithProof(
+      and(userHasWorkspaceRole(actor, role), eq(role, "owner")),
+      {
+        [actor]: { id: "u1" },
+      },
+    )
+
+    expect(proof.ok).toBe(false)
+    expect(proof.failing).toEqual(
+      expect.objectContaining({
+        kind: "relation",
+        path: "root.and[0]",
+        reason: "no matching rows",
+      }),
+    )
+    expect(proof.failing?.relationId).toBe(userHasWorkspaceRole.id)
+    expect(proof.failing?.sql).toBeUndefined()
+  })
+
+  it("includes failing node SQL only when explicitly enabled", async () => {
+    const actor = term<{ id: string }>()
+    const role = term<string>()
+    const userHasWorkspaceRole = relation<{ id: string }, string>()
+
+    const adapter = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: userHasWorkspaceRole,
+          source: {
+            kind: "join-table",
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "role",
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      includeFailingNodeSql: true,
+      queryExecutor: {
+        query: async <Row extends Record<string, unknown>>() => {
+          return queryResult([{ ok: false } as unknown as Row])
+        },
+      },
+    })
+
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const proof = await instance.evaluateWithProof(
+      and(userHasWorkspaceRole(actor, role), eq(role, "owner")),
+      {
+        [actor]: { id: "u1" },
+      },
+    )
+
+    expect(proof.ok).toBe(false)
+    expect(proof.failing?.sql).toContain("SELECT EXISTS(")
+    expect(proof.failing?.paramCount).toBeGreaterThan(0)
+  })
+
+  it("matches failing node identity with the in-memory adapter", async () => {
+    const actor = term<{ id: string }>()
+    const role = term<string>()
+    const userHasWorkspaceRole = relation<{ id: string }, string>()
+    const rule = and(userHasWorkspaceRole(actor, role), eq(role, "owner"))
+
+    const postgres = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: userHasWorkspaceRole,
+          source: {
+            kind: "join-table",
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "role",
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      queryExecutor: {
+        query: async <Row extends Record<string, unknown>>() => {
+          return queryResult([{ ok: false } as unknown as Row])
+        },
+      },
+    })
+    const memory = createInMemoryAdapter({
+      relations: [
+        {
+          relation: userHasWorkspaceRole,
+          pairs: [],
+        },
+      ],
+    })
+
+    const postgresProof = await evaluator(postgres, {
+      evaluatorContext: null,
+    }).evaluateWithProof(rule, {
+      [actor]: { id: "u1" },
+    })
+    const inMemoryProof = await evaluator(memory, {
+      evaluatorContext: null,
+    }).evaluateWithProof(rule, {
+      [actor]: { id: "u1" },
+    })
+
+    expect(postgresProof.ok).toBe(false)
+    expect(inMemoryProof.ok).toBe(false)
+    expect(postgresProof.failing?.kind).toBe(inMemoryProof.failing?.kind)
+    expect(postgresProof.failing?.path).toBe(inMemoryProof.failing?.path)
   })
 
   it("filters explicit candidates in one postgres round trip", async () => {

@@ -563,6 +563,40 @@ describe("algebra api", () => {
     ).toBeGreaterThan(0)
   })
 
+  it("returns a structured failing node when evaluation is denied", async () => {
+    const viewer = term<User>()
+    const role = term<string>()
+    const hasRole = relation<User, string>()
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        {
+          relation: hasRole,
+          pairs: [],
+        },
+      ],
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const proof = await instance.evaluateWithProof(
+      algebra.and(hasRole(viewer, role), eq(role, "owner")),
+      {
+        [viewer]: { id: "u1", suspended: false },
+      },
+    )
+
+    expect(proof.ok).toBe(false)
+    expect(proof.failing).toEqual(
+      expect.objectContaining({
+        kind: "relation",
+        path: "root.and[0]",
+        reason: "no matching relation facts",
+      }),
+    )
+  })
+
   it("supports fluent through builder", async () => {
     type AclEntry = { id: string }
     type User = { id: string }

@@ -1,5 +1,11 @@
 # @tdreyno/he-said
 
+## 0.6.1
+
+### Patch Changes
+
+- a449ce1: Fix postgres `filter(..., { candidates })` for typed term domains by using a domain-table `ANY(...)` candidate query instead of untyped `VALUES`, preventing `uuid = text` errors. Adds unit and integration regression coverage for UUID-backed domains.
+
 ## 0.6.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@tdreyno/he-said",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Functional auth rules for JavaScript and TypeScript applications.",
   "repository": {
     "type": "git",

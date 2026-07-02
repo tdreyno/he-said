@@ -1,5 +1,48 @@
 # @tdreyno/he-said
 
+## 0.3.0
+
+### Minor Changes
+
+- 4880793: feat: colocated relation definitions
+
+  `relation<Left, Right>()` now accepts an optional `pairs` argument so you can
+  define relation data alongside the relation itself:
+
+  ```ts
+  const userOwnsDocument = relation<User, Document>([
+    [u1, d1],
+    [u2, d1],
+  ])
+  ```
+
+  `createInMemoryAdapter` accepts `Relation` objects directly in the `relations`
+  array (in addition to the existing `InMemoryRelationFacts` shape), using the
+  colocated pairs automatically:
+
+  ```ts
+  createInMemoryAdapter({
+    relations: [userOwnsDocument],
+    domain: [u1, u2, d1],
+  })
+  ```
+
+  Both styles can be mixed freely in a single adapter instance.
+
+- e6e5b8a: feat: first-class exists(term) rule
+
+  Adds `exists(term)` to the core algebra so policies can explicitly require row
+  existence without self-edge relations.
+
+  - In-memory adapter: `exists(term)` is satisfied when the bound value exists in
+    the adapter `domain` or in relation facts touching the term.
+  - Postgres adapter: `exists(term)` compiles to an `EXISTS(...)` query over the
+    configured `termDomains` source using
+    `<valueColumn> IS NOT DISTINCT FROM <bound value>`, including source
+    `staticFilters` and typed `predicates`.
+  - Postgres planning fails loud when `exists(term)` is unbound or missing a
+    `termDomains` mapping for that term.
+
 ## 0.2.0
 
 ### Minor Changes

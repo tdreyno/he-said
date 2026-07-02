@@ -98,6 +98,8 @@ Postgres relation/domain sources support:
 - staticFilters (legacy SQL snippets)
 - predicates (typed, parameterized source predicates)
 - orderings (per-column rank maps for enum/string thresholds)
+- `createPostgresAdapter({ resourceTypes })` to derive `termDomains` from
+  table-backed resource declarations (`term` + `table` + `key`)
 
 ### ReBAC Facade (`@tdreyno/he-said/rebac`)
 
@@ -114,6 +116,7 @@ algebra rules and returns:
 
 - `ruleFor(action, resourceType)`
 - `roleRequirementFor(action, resourceType)`
+- `termDomains` (auto-derived from table-backed `resourceType(...)` entries)
 - `sourceFor(action, resourceType, source)` (optional source pushdown mirror for tier predicates/orderings)
 - `can(...)` when initialized with `evaluator`
 

@@ -458,6 +458,41 @@ describe("resourceType", () => {
     expect(NodeResource.key).toBe("node_id")
   })
 
+  it("exposes policy.termDomains from table-backed ResourceType entries", () => {
+    const actor = term<User>()
+    const scope = term<Team>()
+    const nodeInTeam = relation<string, Team>()
+    const memberOfTeam = relation<User, Team>()
+    const NodeResource = resourceType<string, Team>({
+      table: "nodes",
+      key: "node_id",
+      owner: through(nodeInTeam),
+    })
+    const UntypedResource = resourceType<string, Team>({
+      owner: through(nodeInTeam),
+    })
+
+    const policy = scopedPolicy({
+      actor,
+      scope,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: { Node: NodeResource, Untyped: UntypedResource },
+      grants: { read: grant.atLeast("viewer") },
+    })
+
+    expect(policy.termDomains).toEqual([
+      {
+        term: NodeResource.term,
+        table: "nodes",
+        valueColumn: "node_id",
+      },
+    ])
+  })
+
   it("defaults key to 'id'", () => {
     const nodeInTeam = relation<Node, Team>()
     const NodeResource = resourceType<Node, Team>({

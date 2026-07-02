@@ -11,6 +11,7 @@ import {
   type SourcePredicate,
   type Term,
 } from "../core/algebra"
+import type { PostgresTermDomainSource } from "../core/algebra-postgres"
 import { isResourceType, type ResourceType } from "./resource-type"
 
 type AnyScopePath = ScopePath<any, any>
@@ -309,6 +310,7 @@ export interface ScopedPolicy<
   readonly resourceTerms: {
     [ResourceType in keyof Resources]: Term<Resources[ResourceType]>
   }
+  readonly termDomains: ReadonlyArray<PostgresTermDomainSource<any>>
   ruleFor<ResourceType extends keyof Resources>(
     action: Action,
     resourceType: ResourceType,
@@ -401,6 +403,7 @@ export const scopedPolicy = <
   const resourceTerms = {} as {
     [ResourceType in keyof Resources]: Term<Resources[ResourceType]>
   }
+  const termDomains: Array<PostgresTermDomainSource<any>> = []
   const readScopeTerm = options.readScope
     ? term<ReadScope>("rebac.read-scope")
     : undefined
@@ -424,6 +427,14 @@ export const scopedPolicy = <
     }
 
     resourceTerms[resourceType] = resourceTerm
+
+    if (isResourceType(entry) && entry.table) {
+      termDomains.push({
+        term: entry.term,
+        table: entry.table,
+        valueColumn: entry.key,
+      })
+    }
 
     actions.forEach(action => {
       const override = options.overrides?.[resourceType]?.[action]
@@ -526,6 +537,7 @@ export const scopedPolicy = <
     scope: options.scope,
     readScope: readScopeTerm,
     resourceTerms,
+    termDomains,
     ruleFor(action, resourceType) {
       return getEntry(action, resourceType).rule
     },

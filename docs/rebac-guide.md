@@ -64,6 +64,10 @@ through policy-level `bypass` logic.
 `policy.sourceFor(action, resourceType, source)` remains available when you want
 to mirror those predicates onto adapter relation sources.
 
+`policy.termDomains` auto-derives Postgres `termDomains` for table-backed
+`resourceType(...)` entries so `exists(term)` can be wired without a manual
+registration loop.
+
 This keeps rules declarative while preserving adapter-level pushdown for both:
 
 - in-memory relation rows (`predicates` + `orderings`)

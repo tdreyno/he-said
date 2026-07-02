@@ -39,6 +39,7 @@ const policy = scopedPolicy({
 policy.ruleFor("write", "Document")
 policy.ruleFor("manage", "Document")
 policy.roleRequirementFor("write", "Document")
+void policy.termDomains
 
 policy.sourceFor("write", "Document", {
   predicates: [],

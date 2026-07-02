@@ -1513,6 +1513,36 @@ describe("postgres algebra adapter", () => {
     expect(plan.params).toEqual(["d1", "t1"])
   })
 
+  it("derives term domains from resourceTypes in createPostgresAdapter", async () => {
+    const document = term<{ id: string }>()
+    const captured: Array<{ sql: string; params: ReadonlyArray<unknown> }> = []
+
+    const adapter = createPostgresAdapter({
+      relationMappings: [],
+      resourceTypes: [{ term: document, table: "documents", key: "id" }],
+      termEncodings: [{ term: document, encode: encodeId }],
+      queryExecutor: {
+        query: async <Row extends Record<string, unknown>>(
+          sql: string,
+          params: ReadonlyArray<unknown>,
+        ) => {
+          captured.push({ sql, params })
+          return queryResult([{ ok: true } as unknown as Row])
+        },
+      },
+    })
+    const instance = evaluator(adapter, { evaluatorContext: null })
+
+    await expect(
+      instance.evaluate(exists(document), {
+        [document]: { id: "d1" },
+      }),
+    ).resolves.toBe(true)
+
+    expect(captured[0]?.sql).toContain('FROM "documents" "exists1"')
+    expect(captured[0]?.params).toEqual(["d1"])
+  })
+
   it("fails loud when exists(term) is planned with an unbound term", () => {
     const document = term<{ id: string }>()
 

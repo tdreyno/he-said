@@ -98,6 +98,7 @@ export type {
   PostgresQueryResult,
   PostgresRelationMapping,
   PostgresRelationSource,
+  PostgresResourceTypeSource,
   PostgresTermEncoder,
   PostgresTermEncoding,
   PostgresTermDomainSource,

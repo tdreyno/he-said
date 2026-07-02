@@ -120,6 +120,12 @@ export type PostgresTermDomainSource<T> = PostgresTermDomainSourceBase & {
   term: Term<T>
 }
 
+export type PostgresResourceTypeSource<T> = {
+  term: Term<T>
+  table?: string
+  key: string
+}
+
 export interface PostgresProofDiagnostic {
   readonly level: "info" | "warning"
   readonly code: string
@@ -164,6 +170,7 @@ export interface PostgresAdapterOptions<
 > {
   relationMappings: ReadonlyArray<PostgresRelationMapping<any, any>>
   termDomains?: ReadonlyArray<PostgresTermDomainSource<any>>
+  resourceTypes?: ReadonlyArray<PostgresResourceTypeSource<any>>
   termEncodings?: ReadonlyArray<PostgresTermEncoding<any>>
   queryExecutor: PostgresQueryExecutor
   getEvaluatorContext?: (
@@ -1379,6 +1386,27 @@ const termDomainsById = (
   return output
 }
 
+const mergeTermDomains = (
+  explicit: ReadonlyArray<PostgresTermDomainSource<any>> | undefined,
+  resourceTypes: ReadonlyArray<PostgresResourceTypeSource<any>> | undefined,
+): ReadonlyArray<PostgresTermDomainSource<any>> => {
+  const output = new Map<symbol, PostgresTermDomainSource<any>>()
+  explicit?.forEach(entry => {
+    output.set(entry.term, entry)
+  })
+  resourceTypes?.forEach(resourceType => {
+    if (!resourceType.table || output.has(resourceType.term)) {
+      return
+    }
+    output.set(resourceType.term, {
+      term: resourceType.term,
+      table: resourceType.table,
+      valueColumn: resourceType.key,
+    })
+  })
+  return [...output.values()]
+}
+
 const termEncodingsById = (
   termEncodings: ReadonlyArray<PostgresTermEncoding<any>>,
 ): Map<symbol, PostgresTermEncoder<any>> => {
@@ -1677,6 +1705,11 @@ export const createPostgresAdapter = <
 >(
   options: PostgresAdapterOptions<Env, EvaluatorContext>,
 ): EvaluatorAdapter<Env, EvaluatorContext> => {
+  const mergedTermDomains = mergeTermDomains(
+    options.termDomains,
+    options.resourceTypes,
+  )
+
   const probeRule = async (
     rule: Rule,
     environment: Readonly<Env>,
@@ -1684,7 +1717,7 @@ export const createPostgresAdapter = <
   ): Promise<{ ok: boolean; plan: PlannedPostgresRule }> => {
     const plan = planPostgresRule(rule, {
       relationMappings,
-      termDomains: options.termDomains,
+      termDomains: mergedTermDomains,
       termEncodings: options.termEncodings,
       environment,
     })
@@ -1877,7 +1910,7 @@ export const createPostgresAdapter = <
   ): Promise<EvaluationProof> => {
     const plan = planPostgresRule(rule, {
       relationMappings,
-      termDomains: options.termDomains,
+      termDomains: mergedTermDomains,
       termEncodings: options.termEncodings,
       environment,
     })

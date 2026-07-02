@@ -366,7 +366,8 @@ const applyDerivedTermFilters = (
 
 export interface Relation<Left, Right> {
   readonly kind: "relation"
-  readonly id: symbol;
+  readonly id: symbol
+  readonly pairs?: ReadonlyArray<readonly [Left, Right]>;
   (left: Term<Left>, right: Term<Right>): Rule
 }
 
@@ -390,6 +391,7 @@ export type Rule =
   | RelationNode
   | UnaryNode
   | TermNode
+  | ExistsNode
   | EqTermNode
   | EqValueNode
   | RefNode
@@ -423,6 +425,11 @@ export interface UnaryNode {
 
 export interface TermNode {
   readonly type: "term"
+  readonly term: AnyTerm
+}
+
+export interface ExistsNode {
+  readonly type: "exists"
   readonly term: AnyTerm
 }
 
@@ -694,7 +701,9 @@ export const attr = <T, K extends keyof T & string>(
   }
 }
 
-export const relation = <Left, Right>(): Relation<Left, Right> => {
+export const relation = <Left, Right>(
+  pairs?: ReadonlyArray<readonly [Left, Right]>,
+): Relation<Left, Right> => {
   const relationId = Symbol("rules.relation")
 
   const relationFn = ((left: Term<Left>, right: Term<Right>): Rule => {
@@ -720,6 +729,13 @@ export const relation = <Left, Right>(): Relation<Left, Right> => {
     value: relationId,
     enumerable: true,
   })
+
+  if (pairs !== undefined) {
+    Object.defineProperty(relationFn, "pairs", {
+      value: pairs,
+      enumerable: true,
+    })
+  }
 
   return relationFn
 }
@@ -1035,6 +1051,15 @@ export const forAll = <T>(
   }
 }
 
+export const exists = <T>(value: Term<T>): Rule => {
+  const normalized = normalizeTerm(value)
+
+  return {
+    type: "exists",
+    term: normalized.root as AnyTerm,
+  }
+}
+
 export const select = (...terms: Array<AnyTerm>) => {
   return (constraint: ConstraintInput): Rule => {
     return {
@@ -1095,6 +1120,7 @@ export interface EvaluationProof {
 
 export type EvaluationFailingNodeKind =
   | "relation"
+  | "exists"
   | "eq-term"
   | "eq-value"
   | "derives"

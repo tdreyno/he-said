@@ -4,6 +4,13 @@
 
 he-said exports algebra constructors, an in-memory adapter, and related types.
 
+Package subpaths:
+
+- `@tdreyno/he-said/rbac`
+- `@tdreyno/he-said/abac`
+- `@tdreyno/he-said/acl`
+- `@tdreyno/he-said/rebac`
+
 ### Algebra Constructors
 
 - term<T>()
@@ -12,6 +19,7 @@ he-said exports algebra constructors, an in-memory adapter, and related types.
 - factIsTrue(factToken)
 - attr(term, "column")
 - relation<Left, Right>()
+- exists(term)
 - eq(leftTerm, rightTermOrValue)
 - eq(attr(...), attr(...) | value)
 - ne / gt / ge / lt / le
@@ -91,6 +99,23 @@ Postgres relation/domain sources support:
 - predicates (typed, parameterized source predicates)
 - orderings (per-column rank maps for enum/string thresholds)
 
+### ReBAC Facade (`@tdreyno/he-said/rebac`)
+
+- `roleTiers(...levels)`
+- `grant.atLeast(level)`
+- `grant.readScope()`
+- `through(relA, relB, ...)`
+- `either(pathA, pathB, ...)`
+- `scopedPolicy(config)`
+
+`scopedPolicy` compiles declarative scope/membership/resource grants into core
+algebra rules and returns:
+
+- `ruleFor(action, resourceType)`
+- `roleRequirementFor(action, resourceType)`
+- `sourceFor(action, resourceType, source)` (attaches tier predicates/orderings)
+- `can(...)` when initialized with `evaluator`
+
 ## Key Types
 
 - Environment
@@ -116,6 +141,7 @@ Postgres relation/domain sources support:
 - Rule trees are immutable plain objects.
 - and and or flatten nested nodes of the same kind.
 - oneOf(term, values) is equivalent to or(eq(term, v1), eq(term, v2), ...).
+- exists(term) checks row/domain existence for a bound term (useful for fail-closed admin bypass guards).
 - SQL-safe predicate expressions are attached through term.is(...), for example: term.is(eq(attr(term, "status"), "active")).
 - cardinality helpers count satisfied constraints:
   - atLeast(n, ...rules)

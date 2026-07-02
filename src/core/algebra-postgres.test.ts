@@ -1,11 +1,16 @@
 import {
+  associates,
   and,
   attr,
+  belongsTo,
   createInMemoryAdapter,
   createPostgresAdapter,
   eq,
   evaluator,
+  exists,
   forAll,
+  fact,
+  factIsTrue,
   isNotNull,
   not,
   or,
@@ -23,6 +28,123 @@ const queryResult = <Row extends Record<string, unknown>>(
 const encodeId = (value: { id: string }) => value.id
 
 describe("postgres algebra adapter", () => {
+  it("builds a belongsTo source with default primary key", () => {
+    expect(
+      belongsTo({
+        table: "branches",
+        fk: "system_id",
+      }),
+    ).toEqual({
+      kind: "edge",
+      table: "branches",
+      leftColumn: "id",
+      rightColumn: "system_id",
+    })
+  })
+
+  it("builds a belongsTo source with an explicit primary key", () => {
+    expect(
+      belongsTo({
+        table: "branches",
+        fk: "system_id",
+        pk: "key",
+      }),
+    ).toEqual({
+      kind: "edge",
+      table: "branches",
+      leftColumn: "key",
+      rightColumn: "system_id",
+    })
+  })
+
+  it("builds an associates source with predicate passthrough", () => {
+    expect(
+      associates({
+        table: "team_members",
+        left: "user_id",
+        right: "team_id",
+        predicates: [{ column: "role", op: "in", values: ["editor", "owner"] }],
+      }),
+    ).toEqual({
+      kind: "join-table",
+      table: "team_members",
+      leftColumn: "user_id",
+      rightColumn: "team_id",
+      predicates: [{ column: "role", op: "in", values: ["editor", "owner"] }],
+    })
+  })
+
+  it("infers join-table diagnostics when kind is omitted", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    const plan = planPostgresRule(userInWorkspace(actor, workspace), {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+            metadataColumns: { role: "role" },
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      environment: {},
+    })
+
+    expect(plan.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "join-table",
+          table: "workspace_memberships",
+        }),
+      ]),
+    )
+    expect(plan.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "missing-join-table-index-hint" }),
+      ]),
+    )
+  })
+
+  it("defaults to edge when kind is omitted and join-table markers are absent", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    const plan = planPostgresRule(userInWorkspace(actor, workspace), {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      environment: {},
+    })
+
+    expect(plan.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "edge",
+          table: "workspace_memberships",
+        }),
+      ]),
+    )
+    expect(
+      plan.diagnostics.some(
+        diagnostic => diagnostic.code === "missing-join-table-index-hint",
+      ),
+    ).toBe(false)
+  })
+
   it("plans a join-table-backed relation with filter pushdown and diagnostics", () => {
     const actor = term<{ id: string }>()
     const workspace = term<{ id: string }>()
@@ -383,6 +505,18 @@ describe("postgres algebra adapter", () => {
     ).toThrow(
       "postgres adapter does not support JavaScript unary predicates; use term.is(...) with SQL expression predicates",
     )
+  })
+
+  it("fails closed when factIsTrue is unbound", () => {
+    const isAppAdmin = fact<boolean>()
+
+    const plan = planPostgresRule(factIsTrue(isAppAdmin), {
+      relationMappings: [],
+      environment: {},
+    })
+
+    expect(plan.sql).toContain("WHERE FALSE")
+    expect(plan.params).toEqual([])
   })
 
   it("plans correlated not branches as not exists subqueries", () => {
@@ -1142,6 +1276,68 @@ describe("postgres algebra adapter", () => {
       }),
     ).toThrow(
       "postgres adapter does not support unconstrained term nodes yet; anchor the term through a relation or equality first",
+    )
+  })
+
+  it("plans exists(term) against an explicit term domain with filters", () => {
+    const document = term<{ id: string }>()
+    const plan = planPostgresRule(exists(document), {
+      relationMappings: [],
+      termDomains: [
+        {
+          term: document,
+          table: "documents",
+          valueColumn: "id",
+          staticFilters: [{ sql: "{{source}}.deleted_at IS NULL" }],
+          predicates: [{ column: "tenant_id", op: "eq", value: "t1" }],
+        },
+      ],
+      termEncodings: [{ term: document, encode: encodeId }],
+      environment: {
+        [document]: { id: "d1" },
+      },
+    })
+
+    expect(plan.sql).toContain('EXISTS(SELECT 1 FROM "documents" "exists1"')
+    expect(plan.sql).toContain('"exists1"."id" IS NOT DISTINCT FROM $1')
+    expect(plan.sql).toContain('"exists1".deleted_at IS NULL')
+    expect(plan.sql).toContain('"exists1"."tenant_id" IS NOT DISTINCT FROM $2')
+    expect(plan.params).toEqual(["d1", "t1"])
+  })
+
+  it("fails loud when exists(term) is planned with an unbound term", () => {
+    const document = term<{ id: string }>()
+
+    expect(() =>
+      planPostgresRule(exists(document), {
+        relationMappings: [],
+        termDomains: [
+          {
+            term: document,
+            table: "documents",
+            valueColumn: "id",
+          },
+        ],
+        environment: {},
+      }),
+    ).toThrow(
+      "postgres adapter cannot compile exists(term) when the term is unbound",
+    )
+  })
+
+  it("fails loud when exists(term) is planned without a term domain mapping", () => {
+    const document = term<{ id: string }>()
+
+    expect(() =>
+      planPostgresRule(exists(document), {
+        relationMappings: [],
+        termEncodings: [{ term: document, encode: encodeId }],
+        environment: {
+          [document]: { id: "d1" },
+        },
+      }),
+    ).toThrow(
+      "postgres adapter exists(term) requires a termDomains mapping for the referenced term",
     )
   })
 

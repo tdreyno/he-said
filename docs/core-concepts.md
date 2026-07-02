@@ -66,7 +66,7 @@ const isAppAdmin = fact<boolean>()
 const hasBreakGlass = fact<boolean>()
 
 const canManage = or(
-  factIsTrue(isAppAdmin),
+  and(factIsTrue(isAppAdmin), exists(document)),
   and(factIsTrue(hasBreakGlass), canManageDocument),
 )
 
@@ -225,3 +225,39 @@ const result = await abac.can(READ, { user, resource: document, environment })
 The ABAC package compiles to core algebra constraints while keeping policy authoring focused on approve/deny rules, action identity tokens, and reusable failure metadata.
 
 See [ABAC Guide](./abac-guide.md) and [ABAC API](./abac-api.md) for full details.
+
+### ReBAC Package
+
+For relationship-based access control with scope-bound roles, use
+`@tdreyno/he-said/rebac`:
+
+```typescript
+import { grant, roleTiers, scopedPolicy, through } from "@tdreyno/he-said/rebac"
+import { relation, term } from "@tdreyno/he-said"
+
+const actor = term<User>()
+const team = term<Team>()
+
+const memberOfTeam = relation<User, Team>()
+const documentInTeam = relation<Document, Team>()
+
+const policy = scopedPolicy({
+  actor,
+  scope: team,
+  membership: {
+    relation: memberOfTeam,
+    roleColumn: "role",
+    tiers: roleTiers("viewer", "editor", "owner"),
+  },
+  resources: {
+    Document: through(documentInTeam),
+  },
+  grants: {
+    read: grant.atLeast("viewer"),
+    update: grant.atLeast("editor"),
+  },
+})
+```
+
+Use `/rebac` when users hold roles on objects (team/project/workspace) and each
+resource must resolve to an owning scope before checking the role threshold.

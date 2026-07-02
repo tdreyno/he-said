@@ -78,6 +78,7 @@ const analyzeRule = (rule: Rule): Analysis => {
         return
       case "unary":
       case "term":
+      case "exists":
       case "eq-term":
       case "eq-value":
       case "ref":
@@ -138,6 +139,30 @@ const collectCandidates = (
   return [...candidates]
 }
 
+const isValueInTermDomain = (
+  value: unknown,
+  globalDomain: ReadonlyArray<unknown>,
+): boolean => {
+  return globalDomain.some(candidate => Object.is(candidate, value))
+}
+
+const hasValueInTermRelationFacts = (
+  term: AnyTerm,
+  value: unknown,
+  facts: RelationFacts,
+  analysis: Analysis,
+): boolean => {
+  const uses = analysis.relationUses.get(term) ?? []
+
+  return uses.some(use => {
+    const relationFacts = facts.get(use.relationId) ?? []
+    return relationFacts.some(pair => {
+      const candidate = use.side === "left" ? pair[0] : pair[1]
+      return Object.is(candidate, value)
+    })
+  })
+}
+
 const sortAndChildren = (children: Array<Rule>): Array<Rule> => {
   const rank = (node: Rule): number => {
     switch (node.type) {
@@ -149,6 +174,7 @@ const sortAndChildren = (children: Array<Rule>): Array<Rule> => {
       case "unary":
         return 2
       case "term":
+      case "exists":
         return 3
       case "ref":
         return 4
@@ -235,6 +261,17 @@ type SolverState = {
     memoHits: number
     memoMisses: number
   }
+}
+
+const hasExistingTermValue = (
+  term: AnyTerm,
+  value: unknown,
+  state: SolverState,
+): boolean => {
+  return (
+    isValueInTermDomain(value, state.globalDomain) ||
+    hasValueInTermRelationFacts(term, value, state.facts, state.analysis)
+  )
 }
 
 const resolveExpressionOperand = (
@@ -397,6 +434,7 @@ const collectDefinitions = (rule: Rule): Map<string, Rule> => {
       case "relation":
       case "unary":
       case "term":
+      case "exists":
       case "eq-term":
       case "eq-value":
       case "ref":
@@ -452,6 +490,7 @@ const buildDefinitionEdges = (
         case "relation":
         case "unary":
         case "term":
+        case "exists":
         case "eq-term":
         case "eq-value":
         case "derives":
@@ -501,6 +540,7 @@ const validateRefNames = (rule: Rule, definitions: Map<string, Rule>): void => {
       case "relation":
       case "unary":
       case "term":
+      case "exists":
       case "eq-term":
       case "eq-value":
         return
@@ -629,6 +669,36 @@ const solveRule = async (
               ? environment
               : bindValue(environment, rule.term, candidate),
           )
+        })
+      })
+
+      return output
+    }
+
+    case "exists": {
+      const output: Array<Environment> = []
+
+      environments.forEach(environment => {
+        if (hasBinding(environment, rule.term)) {
+          if (hasExistingTermValue(rule.term, environment[rule.term], state)) {
+            output.push(environment)
+          }
+          return
+        }
+
+        const candidates = collectCandidates(
+          rule.term,
+          environment,
+          state.facts,
+          state.analysis,
+          state.globalDomain,
+        )
+        candidates.forEach(candidate => {
+          if (!hasExistingTermValue(rule.term, candidate, state)) {
+            return
+          }
+
+          output.push(bindValue(environment, rule.term, candidate))
         })
       })
 
@@ -895,6 +965,7 @@ const solveRule = async (
 const failingKindForRule = (rule: Rule): EvaluationFailingNode["kind"] => {
   switch (rule.type) {
     case "relation":
+    case "exists":
     case "eq-term":
     case "eq-value":
     case "derives":
@@ -917,6 +988,8 @@ const failingReasonForRule = (rule: Rule): string => {
   switch (rule.type) {
     case "relation":
       return "no matching relation facts"
+    case "exists":
+      return "term does not exist in domain or relation facts"
     case "eq-term":
       return "term equality could not be satisfied"
     case "eq-value":
@@ -1092,6 +1165,7 @@ const findFirstFailingNode = async (
     case "relation":
     case "unary":
     case "term":
+    case "exists":
     case "eq-term":
     case "eq-value":
     case "derives":
@@ -1170,12 +1244,27 @@ export interface InMemoryRelationRow<Left, Right> {
 }
 
 export interface InMemoryAdapterOptions {
-  relations: Array<InMemoryRelationFacts<any, any>>
+  relations: Array<InMemoryRelationFacts<any, any> | Relation<any, any>>
   domain?: ReadonlyArray<unknown>
 }
 
+const isRelation = (
+  value: InMemoryRelationFacts<any, any> | Relation<any, any>,
+): value is Relation<any, any> => {
+  return typeof value === "function"
+}
+
+const toRelationFacts = (
+  entry: InMemoryRelationFacts<any, any> | Relation<any, any>,
+): InMemoryRelationFacts<any, any> => {
+  if (isRelation(entry)) {
+    return { relation: entry, pairs: [...(entry.pairs ?? [])] }
+  }
+  return entry
+}
+
 const buildFacts = (
-  relations: Array<InMemoryRelationFacts<any, any>>,
+  relations: Array<InMemoryRelationFacts<any, any> | Relation<any, any>>,
 ): RelationFacts => {
   const findOrderingForColumn = (
     column: string,
@@ -1276,7 +1365,7 @@ const buildFacts = (
 
   const output = new Map<symbol, Array<FactPair>>()
 
-  relations.forEach(entry => {
+  relations.map(toRelationFacts).forEach(entry => {
     const rows =
       entry.rows ??
       entry.pairs.map(pair => ({

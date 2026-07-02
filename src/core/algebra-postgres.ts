@@ -156,7 +156,6 @@ export interface PlannedPostgresPredicate {
 }
 
 export interface PostgresAdapterOptions<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   Env extends Environment = Environment,
   EvaluatorContext = unknown,
 > {
@@ -166,6 +165,7 @@ export interface PostgresAdapterOptions<
   queryExecutor: PostgresQueryExecutor
   getEvaluatorContext?: (
     evaluatorContext: EvaluatorContext,
+    environment: Readonly<Env>,
   ) => Readonly<Record<string, unknown>>
   explainQuery?: boolean
   includeFailingNodeSql?: boolean

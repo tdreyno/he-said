@@ -182,6 +182,7 @@ Use for local evaluation, unit tests, and rule debugging.
 Use when relation facts are persisted in SQL tables.
 
 - `createPostgresAdapter({ relationMappings, queryExecutor, ... })`
+- `createPostgresAdapter({ relationMappings, queryExecutor, getEvaluatorContext?, ... })`
 - `planPostgresRule(rule, { relationMappings, environment, ... })`
   - `createPostgresAdapter` supports `includeFailingNodeSql` (default `false`) to include parameterized failing-node SQL in `proof.failing`
 - `planPostgresPredicate(rule, { relationMappings, environment, bindings?, ... })`

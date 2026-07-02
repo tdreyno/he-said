@@ -5,6 +5,7 @@ import {
   type EvaluationProof,
   type EvaluatorAdapter,
   type EvaluatorPrepareOptions,
+  getPredicateExpressionTerms,
   isAttributeAccessor,
   isPredicateExpression,
   type PredicateExpression,
@@ -452,6 +453,80 @@ const collectDefinitions = (rule: Rule): Map<string, Rule> => {
 
   visit(rule)
   return definitions
+}
+
+const collectReferencedTerms = (
+  rule: Rule,
+  definitions: ReadonlyMap<string, Rule>,
+): Set<symbol> => {
+  const terms = new Set<symbol>()
+  const addTerm = (value: symbol): void => {
+    terms.add(value)
+  }
+
+  const visit = (node: Rule): void => {
+    switch (node.type) {
+      case "relation":
+        addTerm(node.left)
+        addTerm(node.right)
+        return
+      case "unary":
+        addTerm(node.term)
+        if (isPredicateExpression(node.predicate)) {
+          getPredicateExpressionTerms(node.predicate).forEach(addTerm)
+        }
+        return
+      case "term":
+      case "exists":
+      case "eq-value":
+        addTerm(node.term)
+        return
+      case "eq-term":
+        addTerm(node.left)
+        addTerm(node.right)
+        return
+      case "derives":
+        addTerm(node.entity)
+        addTerm(node.from)
+        return
+      case "and":
+      case "or":
+        node.children.forEach(visit)
+        return
+      case "not":
+      case "distinct":
+      case "memo":
+        visit(node.child)
+        return
+      case "forall":
+        addTerm(node.term)
+        visit(node.child)
+        return
+      case "select":
+        node.terms.forEach(addTerm)
+        visit(node.child)
+        return
+      case "given":
+        visit(node.context)
+        visit(node.rule)
+        return
+      case "ref": {
+        const definition = definitions.get(node.name)
+        if (!definition) {
+          throw new Error(`unknown ref "${node.name}"`)
+        }
+        visit(definition)
+        return
+      }
+      default: {
+        const exhaustive: never = node
+        return exhaustive
+      }
+    }
+  }
+
+  visit(rule)
+  return terms
 }
 
 const resolveSourceKind = (
@@ -1322,9 +1397,15 @@ const createPlannerState = (
 const bindEnvironmentColumns = <Env extends Environment>(
   state: PlannerState,
   environment: Readonly<Env>,
+  referencedTerms: ReadonlySet<symbol>,
+  excludedTerms: ReadonlySet<symbol> = new Set(),
 ): Map<symbol, string> => {
   const columns = new Map<symbol, string>()
   Object.getOwnPropertySymbols(environment).forEach(key => {
+    if (!referencedTerms.has(key) || excludedTerms.has(key)) {
+      return
+    }
+
     columns.set(
       key,
       nextParam(state, encodeTermValue(state, key, environment[key])),
@@ -1359,7 +1440,16 @@ export const planPostgresPredicate = <Env extends Environment>(
   },
 ): PlannedPostgresPredicate => {
   const state = createPlannerState(rule, options)
-  const columns = bindEnvironmentColumns(state, options.environment)
+  const referencedTerms = collectReferencedTerms(rule, state.definitions)
+  const overriddenTerms = new Set<symbol>(
+    options.bindings?.map(binding => binding.term) ?? [],
+  )
+  const columns = bindEnvironmentColumns(
+    state,
+    options.environment,
+    referencedTerms,
+    overriddenTerms,
+  )
 
   options.bindings?.forEach(binding => {
     columns.set(binding.term, binding.sql)
@@ -1380,7 +1470,12 @@ export const planPostgresRule = <Env extends Environment>(
   },
 ): PlannedPostgresRule => {
   const state = createPlannerState(rule, options)
-  const columns = bindEnvironmentColumns(state, options.environment)
+  const referencedTerms = collectReferencedTerms(rule, state.definitions)
+  const columns = bindEnvironmentColumns(
+    state,
+    options.environment,
+    referencedTerms,
+  )
   const predicateSql = `EXISTS(${compileExistsSql(rule, state, columns)})`
   const predicate = buildPlannedPredicate(state, predicateSql)
 
@@ -1894,7 +1989,13 @@ export const createPostgresAdapter = <
     async filter(rule, filterOptions) {
       const state = createPlannerState(rule, options)
       const candidateAlias = nextAlias(state, "cand")
-      const columns = bindEnvironmentColumns(state, filterOptions.environment)
+      const referencedTerms = collectReferencedTerms(rule, state.definitions)
+      const columns = bindEnvironmentColumns(
+        state,
+        filterOptions.environment,
+        referencedTerms,
+        new Set([filterOptions.term]),
+      )
       columns.set(
         filterOptions.term,
         `${quoteIdentifier(candidateAlias)}.candidate`,

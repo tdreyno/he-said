@@ -578,6 +578,60 @@ describe("postgres algebra adapter", () => {
     expect(plan.params).toEqual(["u1"])
   })
 
+  it("binds only rule-referenced environment terms when planning", () => {
+    const actor = term<string>()
+    const file = term<string>()
+    const workspace = term<string>()
+    const fileInWorkspace = relation<string, string>()
+
+    const plan = planPostgresRule(fileInWorkspace(file, workspace), {
+      relationMappings: [
+        {
+          relation: fileInWorkspace,
+          source: {
+            kind: "join-table",
+            table: "workspace_files",
+            leftColumn: "file_id",
+            rightColumn: "workspace_id",
+          },
+        },
+      ],
+      environment: {
+        [file]: "f1",
+        [actor]: "u1",
+      },
+    })
+
+    expect(plan.params).toEqual(["f1"])
+  })
+
+  it("skips overridden environment terms in predicate planning bindings", () => {
+    const actor = term<string>()
+    const workspace = term<string>()
+    const userInWorkspace = relation<string, string>()
+
+    const plan = planPostgresPredicate(userInWorkspace(actor, workspace), {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            kind: "join-table",
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+          },
+        },
+      ],
+      environment: {
+        [actor]: "u1",
+        [workspace]: "w1",
+      },
+      bindings: [{ term: workspace, sql: '"documents"."workspace_id"' }],
+    })
+
+    expect(plan.params).toEqual(["u1"])
+  })
+
   it("plans typed relation predicates as parameterized SQL", () => {
     const actor = term<{ id: string }>()
     const team = term<{ id: string }>()
@@ -1197,6 +1251,55 @@ describe("postgres algebra adapter", () => {
       expect(entry.sql).toContain("(VALUES")
       expect(entry.sql).not.toContain('"workspace_memberships"')
     })
+  })
+
+  it("binds only referenced terms through prepare() evaluation", async () => {
+    const actor = term<string>()
+    const file = term<string>()
+    const workspace = term<string>()
+    const fileInWorkspace = relation<string, string>()
+
+    const captured: Array<{ sql: string; params: ReadonlyArray<unknown> }> = []
+    const adapter = createPostgresAdapter({
+      relationMappings: [
+        {
+          relation: fileInWorkspace,
+          source: {
+            kind: "join-table",
+            table: "workspace_files",
+            leftColumn: "file_id",
+            rightColumn: "workspace_id",
+          },
+        },
+      ],
+      queryExecutor: {
+        query: async <Row extends Record<string, unknown>>(
+          sql: string,
+          params: ReadonlyArray<unknown>,
+        ) => {
+          captured.push({ sql, params })
+          return queryResult([{ ok: true }] as unknown as ReadonlyArray<Row>)
+        },
+      },
+    })
+    const instance = evaluator(adapter, {
+      evaluatorContext: null,
+    })
+
+    const prepared = await instance.prepare({
+      environment: {
+        [actor]: "u1",
+      },
+    })
+
+    await prepared.evaluate(fileInWorkspace(file, workspace), {
+      [file]: "f1",
+    })
+
+    const evaluationQuery = captured.find(entry =>
+      entry.sql.startsWith("SELECT EXISTS("),
+    )
+    expect(evaluationQuery?.params).toEqual(["f1"])
   })
 
   it("fails when static filter params are provided without SQL placeholders", () => {

@@ -47,6 +47,7 @@ export {
   planPostgresPredicate,
   planPostgresRule,
 } from "./core/algebra-postgres"
+export { associates, belongsTo } from "./core/algebra-postgres-helpers"
 export type {
   Environment,
   EvaluationFailingNode,

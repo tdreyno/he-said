@@ -1,6 +1,8 @@
 import {
+  associates,
   and,
   attr,
+  belongsTo,
   createInMemoryAdapter,
   createPostgresAdapter,
   eq,
@@ -26,6 +28,123 @@ const queryResult = <Row extends Record<string, unknown>>(
 const encodeId = (value: { id: string }) => value.id
 
 describe("postgres algebra adapter", () => {
+  it("builds a belongsTo source with default primary key", () => {
+    expect(
+      belongsTo({
+        table: "branches",
+        fk: "system_id",
+      }),
+    ).toEqual({
+      kind: "edge",
+      table: "branches",
+      leftColumn: "id",
+      rightColumn: "system_id",
+    })
+  })
+
+  it("builds a belongsTo source with an explicit primary key", () => {
+    expect(
+      belongsTo({
+        table: "branches",
+        fk: "system_id",
+        pk: "key",
+      }),
+    ).toEqual({
+      kind: "edge",
+      table: "branches",
+      leftColumn: "key",
+      rightColumn: "system_id",
+    })
+  })
+
+  it("builds an associates source with predicate passthrough", () => {
+    expect(
+      associates({
+        table: "team_members",
+        left: "user_id",
+        right: "team_id",
+        predicates: [{ column: "role", op: "in", values: ["editor", "owner"] }],
+      }),
+    ).toEqual({
+      kind: "join-table",
+      table: "team_members",
+      leftColumn: "user_id",
+      rightColumn: "team_id",
+      predicates: [{ column: "role", op: "in", values: ["editor", "owner"] }],
+    })
+  })
+
+  it("infers join-table diagnostics when kind is omitted", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    const plan = planPostgresRule(userInWorkspace(actor, workspace), {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+            metadataColumns: { role: "role" },
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      environment: {},
+    })
+
+    expect(plan.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "join-table",
+          table: "workspace_memberships",
+        }),
+      ]),
+    )
+    expect(plan.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "missing-join-table-index-hint" }),
+      ]),
+    )
+  })
+
+  it("defaults to edge when kind is omitted and join-table markers are absent", () => {
+    const actor = term<{ id: string }>()
+    const workspace = term<{ id: string }>()
+    const userInWorkspace = relation<{ id: string }, { id: string }>()
+
+    const plan = planPostgresRule(userInWorkspace(actor, workspace), {
+      relationMappings: [
+        {
+          relation: userInWorkspace,
+          source: {
+            table: "workspace_memberships",
+            leftColumn: "user_id",
+            rightColumn: "workspace_id",
+          },
+        },
+      ],
+      termEncodings: [{ term: actor, encode: encodeId }],
+      environment: {},
+    })
+
+    expect(plan.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "edge",
+          table: "workspace_memberships",
+        }),
+      ]),
+    )
+    expect(
+      plan.diagnostics.some(
+        diagnostic => diagnostic.code === "missing-join-table-index-hint",
+      ),
+    ).toBe(false)
+  })
+
   it("plans a join-table-backed relation with filter pushdown and diagnostics", () => {
     const actor = term<{ id: string }>()
     const workspace = term<{ id: string }>()

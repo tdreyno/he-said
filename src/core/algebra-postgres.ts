@@ -68,11 +68,11 @@ type PostgresRelationSourceBase = {
 }
 
 export type PostgresEdgeRelationSource = PostgresRelationSourceBase & {
-  kind: "edge"
+  kind?: "edge"
 }
 
 export type PostgresJoinTableRelationSource = PostgresRelationSourceBase & {
-  kind: "join-table"
+  kind?: "join-table"
   metadataColumns?: Readonly<Record<string, string>>
   recommendedView?: string
 }
@@ -80,6 +80,7 @@ export type PostgresJoinTableRelationSource = PostgresRelationSourceBase & {
 export type PostgresRelationSource =
   | PostgresEdgeRelationSource
   | PostgresJoinTableRelationSource
+type PostgresRelationSourceKind = NonNullable<PostgresRelationSource["kind"]>
 
 export interface PostgresRelationMapping<Left, Right> {
   relation: Relation<Left, Right>
@@ -132,7 +133,7 @@ export interface PlannedPostgresRule {
   readonly distinctApplied: number
   readonly sources: ReadonlyArray<{
     relationId: symbol
-    kind: PostgresRelationSource["kind"]
+    kind: PostgresRelationSourceKind
     table: string
   }>
 }
@@ -150,7 +151,7 @@ export interface PlannedPostgresPredicate {
   readonly distinctApplied: number
   readonly sources: ReadonlyArray<{
     relationId: symbol
-    kind: PostgresRelationSource["kind"]
+    kind: PostgresRelationSourceKind
     table: string
   }>
 }
@@ -197,7 +198,7 @@ type PlannerState = {
   diagnostics: Array<PostgresProofDiagnostic>
   sources: Array<{
     relationId: symbol
-    kind: PostgresRelationSource["kind"]
+    kind: PostgresRelationSourceKind
     table: string
   }>
   selectApplied: number
@@ -453,11 +454,34 @@ const collectDefinitions = (rule: Rule): Map<string, Rule> => {
   return definitions
 }
 
+const resolveSourceKind = (
+  source: PostgresRelationSource,
+): PostgresRelationSourceKind => {
+  if (source.kind) {
+    return source.kind
+  }
+
+  if (
+    ("metadataColumns" in source && source.metadataColumns) ||
+    ("recommendedView" in source && source.recommendedView)
+  ) {
+    return "join-table"
+  }
+
+  return "edge"
+}
+
+const isJoinTableSource = (
+  source: PostgresRelationSource,
+): source is PostgresJoinTableRelationSource => {
+  return resolveSourceKind(source) === "join-table"
+}
+
 const addSourceDiagnostics = (
   state: PlannerState,
   source: PlannerRelationSource,
 ): void => {
-  if (source.kind !== "join-table") {
+  if (source.kind === "prepared" || !isJoinTableSource(source)) {
     return
   }
 
@@ -642,7 +666,7 @@ const appendRelation = (
 
   state.sources.push({
     relationId: rule.relationId,
-    kind: source.kind,
+    kind: resolveSourceKind(source),
     table: source.table,
   })
   addSourceDiagnostics(state, source)

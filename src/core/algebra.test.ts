@@ -178,6 +178,92 @@ describe("algebra api", () => {
     ).resolves.toBe(false)
   })
 
+  it("supports colocated relation definitions", async () => {
+    const viewer = term<User>()
+    const document = term<Document>()
+
+    const u1 = { id: "u1", suspended: false } satisfies User
+    const u2 = { id: "u2", suspended: true } satisfies User
+    const d1 = { id: "d1", archived: false } satisfies Document
+
+    const userOwnsDocument = relation<User, Document>([
+      [u1, d1],
+      [u2, d1],
+    ])
+
+    const rule = userOwnsDocument(viewer, document)
+
+    const adapter = createInMemoryAdapter({
+      relations: [userOwnsDocument],
+      domain: [u1, u2, d1],
+    })
+
+    const instance = evaluator(adapter, { evaluatorContext: null })
+
+    await expect(
+      instance.evaluate(rule, { [viewer]: u1, [document]: d1 }),
+    ).resolves.toBe(true)
+
+    await expect(
+      instance.evaluate(rule, { [viewer]: u2, [document]: d1 }),
+    ).resolves.toBe(true)
+  })
+
+  it("supports mixing colocated and explicit relation definitions", async () => {
+    const viewer = term<User>()
+    const team = term<Team>()
+    const document = term<Document>()
+
+    const u1 = { id: "u1", suspended: false } satisfies User
+    const t1 = { id: "t1" } satisfies Team
+    const d1 = { id: "d1", archived: false } satisfies Document
+
+    const userBelongsToTeam = relation<User, Team>([[u1, t1]])
+    const teamOwnsDocument = relation<Team, Document>()
+
+    const rule = algebra.and(
+      userBelongsToTeam(viewer, team),
+      teamOwnsDocument(team, document),
+    )
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        userBelongsToTeam,
+        { relation: teamOwnsDocument, pairs: [[t1, d1]] },
+      ],
+      domain: [u1, t1, d1],
+    })
+
+    const instance = evaluator(adapter, { evaluatorContext: null })
+
+    await expect(
+      instance.evaluate(rule, { [viewer]: u1, [document]: d1 }),
+    ).resolves.toBe(true)
+  })
+
+  it("treats a colocated relation with no pairs as empty", async () => {
+    const viewer = term<User>()
+    const document = term<Document>()
+
+    const u1 = { id: "u1", suspended: false } satisfies User
+    const d1 = { id: "d1", archived: false } satisfies Document
+
+    const userOwnsDocument = relation<User, Document>()
+
+    const rule = userOwnsDocument(viewer, document)
+
+    const adapter = createInMemoryAdapter({
+      relations: [userOwnsDocument],
+      domain: [u1, d1],
+    })
+
+    const instance = evaluator(adapter, { evaluatorContext: null })
+
+    await expect(
+      instance.evaluate(rule, { [viewer]: u1, [document]: d1 }),
+    ).resolves.toBe(false)
+  })
+
   it("throws when letRule name is blank", () => {
     const value = term<string>()
 

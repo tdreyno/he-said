@@ -366,7 +366,8 @@ const applyDerivedTermFilters = (
 
 export interface Relation<Left, Right> {
   readonly kind: "relation"
-  readonly id: symbol;
+  readonly id: symbol
+  readonly pairs?: ReadonlyArray<readonly [Left, Right]>;
   (left: Term<Left>, right: Term<Right>): Rule
 }
 
@@ -694,7 +695,9 @@ export const attr = <T, K extends keyof T & string>(
   }
 }
 
-export const relation = <Left, Right>(): Relation<Left, Right> => {
+export const relation = <Left, Right>(
+  pairs?: ReadonlyArray<readonly [Left, Right]>,
+): Relation<Left, Right> => {
   const relationId = Symbol("rules.relation")
 
   const relationFn = ((left: Term<Left>, right: Term<Right>): Rule => {
@@ -720,6 +723,13 @@ export const relation = <Left, Right>(): Relation<Left, Right> => {
     value: relationId,
     enumerable: true,
   })
+
+  if (pairs !== undefined) {
+    Object.defineProperty(relationFn, "pairs", {
+      value: pairs,
+      enumerable: true,
+    })
+  }
 
   return relationFn
 }

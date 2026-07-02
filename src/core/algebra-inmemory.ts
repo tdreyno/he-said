@@ -1170,12 +1170,27 @@ export interface InMemoryRelationRow<Left, Right> {
 }
 
 export interface InMemoryAdapterOptions {
-  relations: Array<InMemoryRelationFacts<any, any>>
+  relations: Array<InMemoryRelationFacts<any, any> | Relation<any, any>>
   domain?: ReadonlyArray<unknown>
 }
 
+const isRelation = (
+  value: InMemoryRelationFacts<any, any> | Relation<any, any>,
+): value is Relation<any, any> => {
+  return typeof value === "function"
+}
+
+const toRelationFacts = (
+  entry: InMemoryRelationFacts<any, any> | Relation<any, any>,
+): InMemoryRelationFacts<any, any> => {
+  if (isRelation(entry)) {
+    return { relation: entry, pairs: [...(entry.pairs ?? [])] }
+  }
+  return entry
+}
+
 const buildFacts = (
-  relations: Array<InMemoryRelationFacts<any, any>>,
+  relations: Array<InMemoryRelationFacts<any, any> | Relation<any, any>>,
 ): RelationFacts => {
   const findOrderingForColumn = (
     column: string,
@@ -1276,7 +1291,7 @@ const buildFacts = (
 
   const output = new Map<symbol, Array<FactPair>>()
 
-  relations.forEach(entry => {
+  relations.map(toRelationFacts).forEach(entry => {
     const rows =
       entry.rows ??
       entry.pairs.map(pair => ({

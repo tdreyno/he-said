@@ -2,6 +2,10 @@
   "name": "@tdreyno/he-said",
   "version": "0.3.0",
   "description": "Functional auth rules for JavaScript and TypeScript applications.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tdreyno/he-said.git"
+  },
   "publishConfig": {
     "access": "public"
   },

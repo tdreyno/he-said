@@ -29,6 +29,10 @@
     "./acl": {
       "types": "./dist/acl/index.d.ts",
       "default": "./dist/acl/index.js"
+    },
+    "./rebac": {
+      "types": "./dist/rebac/index.d.ts",
+      "default": "./dist/rebac/index.js"
     }
   },
   "files": [

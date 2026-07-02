@@ -371,6 +371,46 @@ console.log(can.allowed)
 
 The ABAC package provides a rule-focused API with action identity tokens, deny/approve precedence, reusable failure tokens, and traceable rule references.
 
+## ReBAC Package
+
+For relationship-scoped roles (for example, "editor on team A"), use
+`@tdreyno/he-said/rebac`:
+
+```typescript
+import { grant, roleTiers, scopedPolicy, through } from "@tdreyno/he-said/rebac"
+import { relation, term } from "@tdreyno/he-said"
+
+type User = { id: string }
+type Team = { id: string }
+type Document = { id: string }
+
+const actor = term<User>()
+const team = term<Team>()
+
+const memberOfTeam = relation<User, Team>()
+const documentInTeam = relation<Document, Team>()
+
+const policy = scopedPolicy({
+  actor,
+  scope: team,
+  membership: {
+    relation: memberOfTeam,
+    roleColumn: "role",
+    tiers: roleTiers("viewer", "editor", "owner"),
+  },
+  resources: {
+    Document: through(documentInTeam),
+  },
+  grants: {
+    read: grant.atLeast("viewer"),
+    update: grant.atLeast("editor"),
+  },
+})
+```
+
+Use `/rebac` when roles are held on objects (teams, projects, folders) rather
+than globally on the actor.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
@@ -384,6 +424,7 @@ The ABAC package provides a rule-focused API with action identity tokens, deny/a
 - [ACL API Reference](docs/acl-api.md)
 - [ABAC Guide](docs/abac-guide.md)
 - [ABAC API Reference](docs/abac-api.md)
+- [ReBAC Guide](docs/rebac-guide.md)
 - [CASL Comparison](docs/casl-comparison.md)
 - [CASL Migration Guide](docs/casl-migration-guide.md)
 - [RBAC Example](docs/rbac-implementation.md)

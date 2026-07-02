@@ -4,6 +4,13 @@
 
 he-said exports algebra constructors, an in-memory adapter, and related types.
 
+Package subpaths:
+
+- `@tdreyno/he-said/rbac`
+- `@tdreyno/he-said/abac`
+- `@tdreyno/he-said/acl`
+- `@tdreyno/he-said/rebac`
+
 ### Algebra Constructors
 
 - term<T>()
@@ -91,6 +98,23 @@ Postgres relation/domain sources support:
 - staticFilters (legacy SQL snippets)
 - predicates (typed, parameterized source predicates)
 - orderings (per-column rank maps for enum/string thresholds)
+
+### ReBAC Facade (`@tdreyno/he-said/rebac`)
+
+- `roleTiers(...levels)`
+- `grant.atLeast(level)`
+- `grant.readScope()`
+- `through(relA, relB, ...)`
+- `either(pathA, pathB, ...)`
+- `scopedPolicy(config)`
+
+`scopedPolicy` compiles declarative scope/membership/resource grants into core
+algebra rules and returns:
+
+- `ruleFor(action, resourceType)`
+- `roleRequirementFor(action, resourceType)`
+- `sourceFor(action, resourceType, source)` (attaches tier predicates/orderings)
+- `can(...)` when initialized with `evaluator`
 
 ## Key Types
 

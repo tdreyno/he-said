@@ -2,7 +2,7 @@
 "@tdreyno/he-said": minor
 ---
 
-Initial public release of `@tdreyno/abac`.
+Initial public release of `@tdreyno/he-said`.
 
 Highlights:
 - Constructor-based, composable authorization rule algebra.

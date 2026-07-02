@@ -104,6 +104,7 @@ Postgres relation/domain sources support:
 - `roleTiers(...levels)`
 - `grant.atLeast(level)`
 - `grant.readScope()`
+- `grant.deny()`
 - `through(relA, relB, ...)`
 - `either(pathA, pathB, ...)`
 - `scopedPolicy(config)`

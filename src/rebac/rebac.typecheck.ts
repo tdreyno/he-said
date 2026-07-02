@@ -32,10 +32,12 @@ const policy = scopedPolicy({
   grants: {
     read: grant.readScope(),
     write: grant.atLeast("editor"),
+    manage: grant.deny(),
   },
 })
 
 policy.ruleFor("write", "Document")
+policy.ruleFor("manage", "Document")
 policy.roleRequirementFor("write", "Document")
 
 policy.sourceFor("write", "Document", {

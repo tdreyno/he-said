@@ -45,6 +45,14 @@ const isReadScopeGrant = (value: unknown): value is ReadScopeGrant => {
   )
 }
 
+const isDenyGrant = (value: unknown): value is DenyGrant => {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === "deny"
+  )
+}
+
 const normalizeLevel = (value: string): string => {
   const normalized = value.trim()
   if (normalized.length === 0) {
@@ -143,6 +151,10 @@ export type ReadScopeGrant = {
   kind: "read-scope"
 }
 
+export type DenyGrant = {
+  kind: "deny"
+}
+
 export const grant = {
   atLeast<Tier extends string>(tier: Tier): AtLeastGrant<Tier> {
     const normalized = tier.trim()
@@ -153,6 +165,9 @@ export const grant = {
   },
   readScope(): ReadScopeGrant {
     return { kind: "read-scope" }
+  },
+  deny(): DenyGrant {
+    return { kind: "deny" }
   },
 }
 
@@ -228,6 +243,7 @@ export type GrantDefinition<
 > =
   | AtLeastGrant<Tier>
   | ReadScopeGrant
+  | DenyGrant
   | Rule
   | ((terms: GrantTerms<Actor, Resource, Scope, ReadScope>) => Rule)
 
@@ -450,6 +466,10 @@ export const scopedPolicy = <
             options.readScope.via(options.scope, readScopeTerm),
             options.readScope.membership(options.actor, readScopeTerm),
           ),
+        }
+      } else if (isDenyGrant(definition)) {
+        compiled_entry = {
+          rule: and(base, { type: "not", child: base }),
         }
       } else {
         const customRule =

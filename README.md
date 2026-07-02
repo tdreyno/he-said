@@ -404,6 +404,7 @@ const policy = scopedPolicy({
   grants: {
     read: grant.atLeast("viewer"),
     update: grant.atLeast("editor"),
+    manage: grant.deny(), // bypass-only action
   },
 })
 ```

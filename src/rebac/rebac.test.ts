@@ -316,6 +316,117 @@ describe("rebac facade", () => {
       }),
     ).resolves.toBe(true)
   })
+
+  it("supports grant.deny() for bypass-only actions", async () => {
+    const actor = term<User>()
+    const scope = term<Team>()
+    type NodeId = string
+    const nodeInTeam = relation<NodeId, Team>()
+    const memberOfTeam = relation<User, Team>()
+    const isAdminFact = fact<boolean>()
+
+    const NodeResource = resourceType<NodeId, Team>({
+      owner: through(nodeInTeam),
+    })
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: nodeInTeam, pairs: [["n1", "team-1"]] },
+        {
+          relation: memberOfTeam,
+          pairs: [["alice", "team-1"]],
+          rows: [
+            { left: "alice", right: "team-1", columns: { role: "editor" } },
+          ],
+        },
+      ],
+      domain: ["n1", "team-1", "alice", "admin-user"],
+    })
+
+    const policy = scopedPolicy({
+      actor,
+      scope,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: { Node: NodeResource },
+      grants: { manage: grant.deny() },
+      bypass: ({ resource }) => and(factIsTrue(isAdminFact), resource.exists()),
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    await expect(
+      policy.can("alice", "manage", "Node", "n1", {
+        facts: { [isAdminFact]: false },
+      }),
+    ).resolves.toBe(false)
+
+    await expect(
+      policy.can("alice", "manage", "Node", "n1", {
+        facts: { [isAdminFact]: true },
+      }),
+    ).resolves.toBe(true)
+
+    await expect(
+      policy.can("admin-user", "manage", "Node", "n1", {
+        facts: { [isAdminFact]: true },
+      }),
+    ).resolves.toBe(true)
+  })
+
+  it("grant.deny() denies when bypass is not configured", async () => {
+    const actor = term<User>()
+    const team = term<Team>()
+    const fileInTeam = relation<File, Team>()
+    const memberOfTeam = relation<User, Team>()
+
+    const adapter = createInMemoryAdapter({
+      relations: [
+        { relation: fileInTeam, pairs: [["file-1", "team-1"]] },
+        {
+          relation: memberOfTeam,
+          pairs: [["editor-user", "team-1"]],
+          rows: [
+            {
+              left: "editor-user",
+              right: "team-1",
+              columns: { role: "editor" },
+            },
+          ],
+        },
+      ],
+      domain: ["editor-user", "team-1", "file-1"],
+    })
+
+    const policy = scopedPolicy<
+      User,
+      Team,
+      { File: File },
+      "manage",
+      "viewer" | "editor"
+    >({
+      actor,
+      scope: team,
+      membership: {
+        relation: memberOfTeam,
+        roleColumn: "role",
+        tiers: roleTiers("viewer", "editor"),
+      },
+      resources: {
+        File: through(fileInTeam),
+      },
+      grants: {
+        manage: grant.deny(),
+      },
+      evaluator: evaluator(adapter, { evaluatorContext: null }),
+    })
+
+    await expect(
+      policy.can("editor-user", "manage", "File", "file-1"),
+    ).resolves.toBe(false)
+  })
 })
 
 describe("resourceType", () => {

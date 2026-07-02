@@ -58,6 +58,9 @@ const policy = scopedPolicy({
 rule, so `policy.ruleFor(...)` / `policy.can(...)` enforce the threshold
 without extra wiring.
 
+Use `grant.deny()` when an action has no base grant and should only be allowed
+through policy-level `bypass` logic.
+
 `policy.sourceFor(action, resourceType, source)` remains available when you want
 to mirror those predicates onto adapter relation sources.
 

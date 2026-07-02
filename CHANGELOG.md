@@ -1,5 +1,55 @@
 # @tdreyno/he-said
 
+## 0.5.0
+
+### Minor Changes
+
+- 69c675b: rebac: add `grant.deny()` for actions with no base grant
+
+  `grant.deny()` now compiles as an always-false base grant, so actions can be
+  declared directly in `grants` without hand-built external rules. When `bypass`
+  is configured for `resourceType(...)` resources, it is still OR'd into the
+  compiled action rule, enabling bypass-only actions.
+
+- f926e22: rebac/postgres: derive term domains from resource metadata
+
+  `scopedPolicy(...).termDomains` now auto-derives Postgres term-domain sources
+  from table-backed `resourceType(...)` entries. `createPostgresAdapter(...)`
+  also accepts `resourceTypes` and derives `termDomains` internally, eliminating
+  manual domain registration loops while preserving explicit `termDomains`
+  precedence when both are provided.
+
+- aebea68: rebac: add bindable through anchors and custom composite existence rules
+
+  `through(...)` now supports anchored intermediate hops via
+  `through(relA).at(term).through(relB, ...)`, allowing callers to bind
+  composite-path intermediates from context terms.
+
+  `resourceType(...)` now accepts `existence(resource, context)` so
+  `resource.exists()` can be made composite-aware when id-only existence is too
+  weak.
+
+- 0e6294f: add `@tdreyno/he-said/drizzle` bridge utilities
+
+  Introduces a new Drizzle subpath export with schema-driven helpers:
+
+  - `fromFk(columnRef)` for FK-derived relation sources
+  - `associatesTable(table, { left, right, predicates })`
+  - `inColumn(columnRef, values)` typed predicate helper
+  - `drizzleResourceType(table, { owner, contextTerms, fixed })` with composite
+    PK context/fixed validation
+  - `drizzleExecutor(db)` adapter bridge for Drizzle-backed query execution
+
+  Also adds package export wiring and optional peer dependency metadata for
+  `drizzle-orm`.
+
+### Patch Changes
+
+- 2be6cb6: docs(rebac): document ownership-rule reuse via `resourceType().ownedBy()`
+
+  Records FR-20 closure by documenting the shipped ownership export path:
+  `resourceType(...).ownedBy(scopeTerm)`.
+
 ## 0.4.0
 
 ### Minor Changes

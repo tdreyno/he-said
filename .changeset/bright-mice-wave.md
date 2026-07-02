@@ -1,5 +1,5 @@
 ---
-"@tdreyno/abac": minor
+"@tdreyno/he-said": minor
 ---
 
 Initial public release of `@tdreyno/abac`.

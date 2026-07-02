@@ -14,6 +14,9 @@ import {
   failure,
   failureMessage,
   all,
+  userTerm,
+  resourceTerm,
+  environmentTerm,
   eq,
   ge,
   eqEnv,
@@ -80,9 +83,14 @@ const p = policy(ruleA, ruleB, ruleC)
 
 ## Enforcer
 
-### `enforcer(policy)`
+### `enforcer(policy, options?)`
 
 Create an immutable enforcer instance.
+
+`options`:
+
+- `adapter?: EvaluatorAdapter<Record<PropertyKey, unknown>, Context>`
+- `evaluatorContext?: Context`
 
 ### `authz.can(actionToken, context)`
 
@@ -124,6 +132,12 @@ eq(
   (resource: Resource) => resource.department,
 )
 eq((user: User) => user.suspended, true)
+
+// expression-based (SQL-compilable with postgres adapter)
+eq(
+  attr(userTerm<User>(), "department"),
+  attr(resourceTerm<Resource>(), "department"),
+)
 ```
 
 ### `ge(...)`
@@ -132,6 +146,12 @@ eq((user: User) => user.suspended, true)
 ge(
   (user: User) => user.clearance,
   (resource: Resource) => resource.sensitivity,
+)
+
+// expression-based
+ge(
+  attr(userTerm<User>(), "clearance"),
+  attr(resourceTerm<Resource>(), "sensitivity"),
 )
 ```
 

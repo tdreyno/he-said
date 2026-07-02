@@ -237,6 +237,36 @@ Full runnable example:
 
 - `src/abac/examples/example-core-algebra-fluent.ts`
 
+### 5. SQL-compilable ABAC expressions
+
+When you want ABAC rules to plan through the Postgres adapter, use predicate
+expressions (`attr(...)`, `eq(...)`, `ge(...)`) and relation atoms in
+`approve(...)` / `deny(...)`.
+
+```ts
+import { attr, eq, ge } from "@tdreyno/he-said"
+import { approve, deny, resourceTerm, userTerm } from "@tdreyno/he-said/abac"
+
+const denySuspended = deny(eq(attr(userTerm<User>(), "suspended"), true))
+
+const approveRead = approve([
+  eq(
+    attr(userTerm<User>(), "department"),
+    attr(resourceTerm<Document>(), "department"),
+  ),
+  ge(
+    attr(userTerm<User>(), "clearance"),
+    attr(resourceTerm<Document>(), "sensitivity"),
+  ),
+])
+```
+
+Closures still work for in-memory rules; they fail loudly on Postgres, where
+JavaScript unary predicates are not SQL-compilable.
+
+See **[ABAC on Postgres](./abac-postgres-guide.md)** for a complete in-memory
+and Postgres-backed policy walkthrough.
+
 ## Decision and Trace
 
 A decision includes:

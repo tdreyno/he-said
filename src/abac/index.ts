@@ -5,16 +5,21 @@ export {
   all,
   approve,
   deny,
+  actionTerm,
+  environmentTerm,
   eq,
   eqEnv,
   failure,
   failureMessage,
   ge,
   policy,
+  resourceTerm,
+  userTerm,
 } from "./abac-builder"
 export { enforcer } from "./abac-enforcer"
 export type {
   ABACEnforcer,
+  ABACEnforcerOptions,
   ActionToken,
   CanContext,
   CanDecision,

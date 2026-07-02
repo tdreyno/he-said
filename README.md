@@ -424,6 +424,7 @@ than globally on the actor.
 - [ACL API Reference](docs/acl-api.md)
 - [ABAC Guide](docs/abac-guide.md)
 - [ABAC API Reference](docs/abac-api.md)
+- [ABAC on Postgres](docs/abac-postgres-guide.md)
 - [ReBAC Guide](docs/rebac-guide.md)
 - [CASL Comparison](docs/casl-comparison.md)
 - [CASL Migration Guide](docs/casl-migration-guide.md)

@@ -1,4 +1,16 @@
-import { action, actionIs, approve, deny, eq, ge, policy } from "./index"
+import { attr, createInMemoryAdapter, eq as coreEq, relation } from "../index"
+import {
+  action,
+  actionIs,
+  approve,
+  deny,
+  enforcer,
+  eq,
+  ge,
+  policy,
+  resourceTerm,
+  userTerm,
+} from "./index"
 
 type User = {
   id: string
@@ -28,5 +40,26 @@ const approveRead = approve([
     (resource: Resource) => resource.sensitivity,
   ),
 ])
+
+const belongsToWorkspace = relation<User, Resource>()
+const denySuspendedExpr = deny(
+  coreEq(attr(userTerm<User>(), "suspended"), true),
+)
+const approveReadExpr = approve([
+  belongsToWorkspace(userTerm<User>(), resourceTerm<Resource>()),
+  coreEq(
+    attr(userTerm<User>(), "department"),
+    attr(resourceTerm<Resource>(), "department"),
+  ),
+])
+
+const adapter = createInMemoryAdapter({
+  relations: [],
+})
+
+enforcer(policy(denySuspendedExpr, approveReadExpr), {
+  adapter,
+  evaluatorContext: undefined,
+})
 
 policy(denySuspended, approveRead)

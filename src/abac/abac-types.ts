@@ -1,4 +1,9 @@
-import type { EvaluationProof, OutcomeToken, Rule } from "../core/algebra"
+import type {
+  EvaluationProof,
+  EvaluatorAdapter,
+  OutcomeToken,
+  Rule,
+} from "../core/algebra"
 
 export type ActionToken<TLabel extends string = string> = symbol & {
   readonly __actionBrand?: { label: TLabel }
@@ -65,4 +70,12 @@ export interface ABACEnforcer<User, Resource, Environment> {
     context: CanContext<User, Resource, Environment>,
   ): Promise<CanDecision>
   policy(): PolicyRef
+}
+
+export interface ABACEnforcerOptions<EvaluatorContext = unknown> {
+  readonly adapter?: EvaluatorAdapter<
+    Record<PropertyKey, unknown>,
+    EvaluatorContext
+  >
+  readonly evaluatorContext?: EvaluatorContext
 }

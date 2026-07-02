@@ -11,6 +11,7 @@ import {
 } from "./abac-builder"
 import type {
   ABACEnforcer,
+  ABACEnforcerOptions,
   ActionToken,
   CanContext,
   CanDecision,
@@ -35,10 +36,24 @@ const proofToTrace = (
 
 export const enforcer = <User, Resource, Environment>(
   accessPolicy: PolicyRef,
+  options?: ABACEnforcerOptions,
 ): ABACEnforcer<User, Resource, Environment> => {
-  const evalEngine = evaluator(createInMemoryAdapter({ relations: [] }), {
-    evaluatorContext: undefined,
-  })
+  const evalEngine = evaluator(
+    options?.adapter ?? createInMemoryAdapter({ relations: [] }),
+    {
+      evaluatorContext: options?.evaluatorContext,
+    },
+  )
+
+  const createEvalEnvironment = (
+    evalContext: EvalContext<User, Resource, Environment>,
+    rule: RuleRef,
+  ): Record<PropertyKey, unknown> => {
+    return buildEvalEnvironment(evalContext, {
+      rule: rule.rule,
+      includeEvalContext: true,
+    })
+  }
 
   const orderedRules = sortRulesByPriorityAndKind(accessPolicy.rules, [
     "deny",
@@ -59,11 +74,11 @@ export const enforcer = <User, Resource, Environment>(
       environment: context.environment,
     }
 
-    const evalEnvironment = buildEvalEnvironment(evalContext)
     const checkedRules: RuleTrace[] = []
     const matchedRules: RuleTrace[] = []
 
     for (const rule of denyRules) {
+      const evalEnvironment = createEvalEnvironment(evalContext, rule)
       const proof = await evalEngine.evaluateWithProof(
         rule.rule,
         evalEnvironment,
@@ -87,6 +102,7 @@ export const enforcer = <User, Resource, Environment>(
     }
 
     for (const rule of approveRules) {
+      const evalEnvironment = createEvalEnvironment(evalContext, rule)
       const proof = await evalEngine.evaluateWithProof(
         rule.rule,
         evalEnvironment,

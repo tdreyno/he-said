@@ -51,6 +51,8 @@ const policy = scopedPolicy({
 
 - `through(relA, relB, ...)`: compose an ownership chain.
 - `either(pathA, pathB)`: support disjoint parent models.
+- `resourceType(...).ownedBy(scopeTerm)`: export the exact ownership rule from
+  the resource declaration for reuse outside `scopedPolicy`.
 
 ## Tiered Membership Source Predicates
 

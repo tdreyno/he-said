@@ -6,31 +6,6 @@ he-said lets you model authorization as composable, typed rules instead of scatt
 
 Use it to express RBAC, ABAC, ACL, and graph-style access checks with one consistent API.
 
-## SonarQube (SonarCloud)
-
-This repository is configured for SonarCloud project `tdreyno_abac`.
-
-1. Generate coverage (`coverage/lcov.info`) with the Sonar-safe test set (excludes Postgres integration test):
-
-```bash
-npm run test:ci:sonar
-```
-
-2. Set `SONAR_TOKEN` in your environment (or in `.env`).
-3. Run analysis:
-
-```bash
-npm run sonar
-```
-
-4. Check quality gate status:
-
-```bash
-npm run sonar:quality-gate
-```
-
-For local MCP-driven Sonar checks in VS Code, use the SonarQube MCP tools against project key `tdreyno_abac`.
-
 ## Why he-said
 
 - Type-safe terms and relations with strong TypeScript inference

@@ -18,6 +18,9 @@ export {
 export {
   resourceType,
   isResourceType,
+  type InferResourceContext,
+  type InferResourceRow,
+  type ResourceRef,
   type ResourceType,
   type ResourceTypeOptions,
 } from "./resource-type"

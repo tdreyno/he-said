@@ -15,6 +15,24 @@ type ContextValues<Context extends Record<string, Term<any>>> = {
   [K in keyof Context]: TermValue<Context[K]>
 }
 
+/** The declared row shape of a ResourceType. */
+export type InferResourceRow<R> =
+  R extends ResourceType<infer T, any, any> ? T : never
+
+/**
+ * The declared context values of a ResourceType — what `bindRef` requires
+ * under `ref.context`. Resolves to an empty record for context-free types.
+ */
+export type InferResourceContext<R> =
+  R extends ResourceType<any, any, infer Context>
+    ? ContextValues<Context>
+    : never
+
+/** The `ref` shape `bindRef` accepts for a ResourceType. */
+export type ResourceRef<R> = [keyof InferResourceContext<R>] extends [never]
+  ? { id: unknown; context?: Record<string, never> }
+  : { id: unknown; context: InferResourceContext<R> }
+
 export interface ResourceTypeOptions<
   T,
   Scope,
@@ -59,6 +77,16 @@ export interface ResourceType<
    * or spread it into an existing environment.
    */
   bind(ref: T & ContextValues<Context>): Environment
+  /**
+   * Bind from an id-shaped ref (`{ id, context? }`) — the wire shape most
+   * authorization callers hold. Binds the resource term to `ref.id` and each
+   * declared context term to `ref.context[key]`. Returns null when a declared
+   * context value is missing — fail-closed: callers treat null as deny.
+   */
+  bindRef(ref: {
+    id: unknown
+    context?: Readonly<Record<string, unknown>>
+  }): Environment | null
 }
 
 export const resourceType = <
@@ -102,6 +130,21 @@ export const resourceType = <
         env[ctxTerm as unknown as symbol] = (ref as Record<string, unknown>)[
           ctxKey
         ]
+      }
+      return env
+    },
+
+    bindRef(ref: {
+      id: unknown
+      context?: Readonly<Record<string, unknown>>
+    }): Environment | null {
+      const env: Environment = { [resourceTerm]: ref.id }
+      for (const [ctxKey, ctxTerm] of Object.entries(context)) {
+        const value = ref.context?.[ctxKey]
+        if (value === null || value === undefined) {
+          return null
+        }
+        env[ctxTerm as unknown as symbol] = value
       }
       return env
     },

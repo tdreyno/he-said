@@ -1,5 +1,11 @@
 # @tdreyno/he-said
 
+## 0.11.1
+
+### Patch Changes
+
+- 5e2f9ed: `idVar`/`idResourceType` type non-`id` primary keys as `string` instead of `unknown` — the runtime already selects the first PK column (e.g. a `run_id` pk), and the id-string model these APIs serve keys on string ids.
+
 ## 0.11.0
 
 ### Minor Changes

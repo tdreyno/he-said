@@ -96,7 +96,9 @@ export const resourceType = <
 >(
   options: ResourceTypeOptions<T, Scope, Context>,
 ): ResourceType<T, Scope, Context> => {
-  const resourceTerm = term<T>()
+  // Label the term with its table so proofs, debuggers, and diagram
+  // renderers show "systems" instead of an anonymous term.
+  const resourceTerm = term<T>(options.table)
   const {
     table,
     key = "id",

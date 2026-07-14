@@ -467,6 +467,63 @@ export const via = <Left, Right>(
   return navigation
 }
 
+/**
+ * Typed seed builder for the in-memory adapter: rows are written with the
+ * tables' TypeScript property names (camelCase, compiler-checked against
+ * `$inferSelect`) and converted to the column-keyed, table-name-keyed shape
+ * `InMemorySeedAdapterOptions["seed"]` expects — so a typo'd table or column
+ * is a compile error, not an empty table that silently denies.
+ */
+export const seedFor = <TTables extends Record<string, AnyPgTable>>(
+  tables: TTables,
+) => {
+  return (seed: {
+    [K in keyof TTables]?: ReadonlyArray<
+      Partial<TTables[K]["$inferSelect"]> & Record<string, unknown>
+    >
+  }): Record<string, ReadonlyArray<Record<string, unknown>>> => {
+    const output: Record<string, Array<Record<string, unknown>>> = {}
+
+    for (const [key, rows] of Object.entries(seed)) {
+      if (!rows) {
+        continue
+      }
+      const table = tables[key]
+      if (!table) {
+        throw new Error(`seedFor: unknown table key "${key}"`)
+      }
+
+      const tableConfig = getTableConfig(table)
+      const tableName = qualifyTable({
+        name: tableConfig.name,
+        schema: tableConfig.schema,
+      })
+      const columnByProperty = new Map(
+        tablePropertyColumns(table).map(entry => [
+          entry.property,
+          entry.column.name,
+        ]),
+      )
+
+      output[tableName] = rows.map((row: Record<string, unknown>) => {
+        const converted: Record<string, unknown> = {}
+        for (const [property, value] of Object.entries(row)) {
+          const column = columnByProperty.get(property)
+          if (!column) {
+            throw new Error(
+              `seedFor: table "${key}" has no column property "${property}"`,
+            )
+          }
+          converted[column] = value
+        }
+        return converted
+      })
+    }
+
+    return output
+  }
+}
+
 /** The TS type of a table's `id` column value, when it has one. */
 type InferIdValue<TTable extends AnyPgTable> = TTable["$inferSelect"] extends {
   id: infer V

@@ -1408,6 +1408,13 @@ export interface InMemorySeedAdapterOptions {
   termDomains?: ReadonlyArray<PostgresTermDomainSource<any>>
   /** Rows per table, keyed by (optionally schema-qualified) table name. */
   seed: Readonly<Record<string, ReadonlyArray<Record<string, unknown>>>>
+  /**
+   * When true (default), seed keys matching no relation source or term
+   * domain throw — a typo'd table would otherwise read as empty and deny.
+   * Set false when intentionally sharing one wide seed across adapters that
+   * read different subsets of it.
+   */
+  strictSeed?: boolean
 }
 
 const isSeedOptions = (
@@ -1444,7 +1451,9 @@ const requireNoStaticFilters = (
 const seedToStandardOptions = (
   options: InMemorySeedAdapterOptions,
 ): InMemoryAdapterOptions => {
-  const relations = options.relationMappings.map(entry => {
+  // Resolve and validate sources FIRST — a missing source or staticFilters
+  // error is more specific than any seed-key complaint.
+  const resolvedMappings = options.relationMappings.map(entry => {
     const normalized =
       typeof entry === "function"
         ? { relation: entry, source: attachedRelationSource(entry.id) }
@@ -1456,7 +1465,38 @@ const seedToStandardOptions = (
       )
     }
     requireNoStaticFilters(source.staticFilters, `table "${source.table}"`)
+    return { relation, source }
+  })
 
+  // Fail loud on seed keys that match no source/domain table: a typo'd table
+  // name would otherwise read as an empty table → deny → tests that expect
+  // deny pass for the wrong reason.
+  if (options.strictSeed !== false) {
+    const knownTables = new Set<string>()
+    const addKnown = (table: string) => {
+      knownTables.add(table)
+      if (table.includes(".")) {
+        knownTables.add(table.slice(table.lastIndexOf(".") + 1))
+      }
+    }
+    resolvedMappings.forEach(entry => {
+      addKnown(entry.source.table)
+    })
+    options.termDomains?.forEach(domain => {
+      addKnown(domain.table)
+    })
+
+    const unknownKeys = Object.keys(options.seed).filter(
+      key => !knownTables.has(key),
+    )
+    if (unknownKeys.length > 0) {
+      throw new Error(
+        `in-memory seed contains tables no relation source or term domain reads: ${unknownKeys.join(", ")}`,
+      )
+    }
+  }
+
+  const relations = resolvedMappings.map(({ relation, source }) => {
     // SQL joins never match NULL columns — drop those rows for parity.
     const rows = seedTableRows(options.seed, source.table)
       .filter(

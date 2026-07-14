@@ -72,7 +72,15 @@ describe("in-memory adapter — seed mode", () => {
     ],
   }
 
-  const engine = instance(createInMemoryAdapter({ relationMappings, seed }))
+  const engine = instance(
+    createInMemoryAdapter({
+      relationMappings,
+      // teams rows are read by the domain-engine tests below; declare the
+      // domain here too so the shared seed passes strict validation.
+      termDomains: [{ term: teamT, table: "teams", valueColumn: "id" }],
+      seed,
+    }),
+  )
 
   const evaluate = (rule: Rule, env: Environment) => engine.evaluate(rule, env)
 
@@ -157,6 +165,7 @@ describe("in-memory adapter — seed mode", () => {
           },
         ],
         seed,
+        strictSeed: false,
       }),
     )
 
@@ -178,6 +187,7 @@ describe("in-memory adapter — seed mode", () => {
       createInMemoryAdapter({
         relationMappings: [selfDescribed],
         seed,
+        strictSeed: false,
       }),
     )
 
@@ -229,6 +239,7 @@ describe("in-memory adapter — seed mode", () => {
       createInMemoryAdapter({
         relationMappings: [qualified],
         seed,
+        strictSeed: false,
       }),
     )
 
@@ -265,6 +276,27 @@ describe("in-memory adapter — seed mode", () => {
     expect(() =>
       createInMemoryAdapter({ relationMappings: [bare], seed }),
     ).toThrow("requires a relation source")
+  })
+
+  it("fails loud on seed tables nothing reads (typo detection)", () => {
+    expect(() =>
+      createInMemoryAdapter({
+        relationMappings,
+        seed: { ...seed, team_memberz: [{ user_id: "x", team_id: "y" }] },
+      }),
+    ).toThrow(
+      "in-memory seed contains tables no relation source or term domain reads: teams, team_memberz",
+    )
+  })
+
+  it("strictSeed: false permits intentionally wide shared seeds", () => {
+    expect(() =>
+      createInMemoryAdapter({
+        relationMappings,
+        seed,
+        strictSeed: false,
+      }),
+    ).not.toThrow()
   })
 
   it("composes with rule evaluation end-to-end (editor AND shared system)", async () => {

@@ -13,6 +13,7 @@ import {
   idVar,
   inColumn,
   rowVar,
+  seedFor,
   rowVarDomain,
   rowVarEncoding,
   via,
@@ -261,6 +262,34 @@ describe("drizzle bridge", () => {
 
     expect(() => fromFk(branches.systemId, projects)).toThrow(
       'fromFk(system_id) references "systems_fkval", not "projects_fkval"',
+    )
+  })
+
+  it("seedFor converts property-keyed rows to column-keyed seed tables", () => {
+    const teamMembers = pgTable("team_members", {
+      userId: text("user_id").notNull(),
+      teamId: text("team_id").notNull().primaryKey(),
+      role: text("role").notNull(),
+    })
+
+    const seed = seedFor({ teamMembers })({
+      teamMembers: [{ userId: "alice", teamId: "team-a", role: "editor" }],
+    })
+
+    expect(seed).toEqual({
+      team_members: [{ user_id: "alice", team_id: "team-a", role: "editor" }],
+    })
+  })
+
+  it("seedFor rejects unknown table keys and unknown column properties", () => {
+    const teams = pgTable("teams_seed", { id: text("id").primaryKey() })
+    const build = seedFor({ teams })
+
+    expect(() => build({ teamz: [{ id: "x" }] } as never)).toThrow(
+      'seedFor: unknown table key "teamz"',
+    )
+    expect(() => build({ teams: [{ ident: "x" } as never] })).toThrow(
+      'seedFor: table "teams" has no column property "ident"',
     )
   })
 })

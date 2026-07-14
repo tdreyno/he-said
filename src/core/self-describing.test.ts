@@ -126,3 +126,27 @@ describe("self-describing relations and terms", () => {
     ).toThrow('termDomains mapping for "team"')
   })
 })
+
+describe("collectRuleTerms", () => {
+  it("collects term and fact roots across the tree", async () => {
+    const { and, or, collectRuleTerms, exists, fact, factIsTrue, not, term } =
+      await import("..")
+    const { relation } = await import("./algebra")
+
+    const actor = term<string>("actor")
+    const teamT = term<string>("team")
+    const isAdmin = fact<boolean>("isAdmin")
+    const memberOf = relation<string, string>()
+
+    const usage = collectRuleTerms(
+      or(
+        and(factIsTrue(isAdmin), exists(teamT)),
+        and(memberOf(actor, teamT), not(exists(actor))),
+      ),
+    )
+
+    expect(usage.terms).toEqual(expect.arrayContaining([actor, teamT]))
+    expect(usage.terms).toHaveLength(2)
+    expect(usage.facts).toEqual([isAdmin])
+  })
+})

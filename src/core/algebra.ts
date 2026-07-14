@@ -737,6 +737,90 @@ export const describeAlgebraSymbol = (value: symbol): string => {
   return match ? match[1]! : description
 }
 
+/** Term/fact usage of a rule tree — see {@link collectRuleTerms}. */
+export interface RuleTermUsage {
+  /** Root symbols of every non-fact term the rule references. */
+  readonly terms: ReadonlyArray<AnyTerm>
+  /** Root symbols of every fact the rule references — these MUST be bound. */
+  readonly facts: ReadonlyArray<AnyTerm>
+}
+
+/**
+ * Collect every term and fact a rule references (normalized to roots).
+ * Facts must be bound in the evaluation environment (adapters throw
+ * otherwise); plain terms may be bound OR left free to join — so consumers
+ * that expect certain terms bound can assert env completeness explicitly
+ * instead of discovering a silent free join.
+ */
+export const collectRuleTerms = (rule: Rule): RuleTermUsage => {
+  const terms = new Set<AnyTerm>()
+  const facts = new Set<AnyTerm>()
+
+  const add = (value: AnyTerm): void => {
+    const root = isKnownTerm(value)
+      ? (normalizeTerm(value as Term<unknown>).root as AnyTerm)
+      : value
+    if (isFact(root)) {
+      facts.add(root)
+    } else {
+      terms.add(root)
+    }
+  }
+
+  const visit = (node: Rule): void => {
+    switch (node.type) {
+      case "relation":
+        add(node.left)
+        add(node.right)
+        return
+      case "unary":
+      case "term":
+      case "exists":
+        add(node.term)
+        return
+      case "eq-term":
+        add(node.left)
+        add(node.right)
+        return
+      case "eq-value":
+        add(node.term)
+        return
+      case "derives":
+        add(node.entity)
+        add(node.from)
+        return
+      case "and":
+      case "or":
+        node.children.forEach(visit)
+        return
+      case "not":
+      case "distinct":
+      case "memo":
+        visit(node.child)
+        return
+      case "forall":
+        add(node.term)
+        visit(node.child)
+        return
+      case "select":
+        node.terms.forEach(add)
+        visit(node.child)
+        return
+      case "given":
+        visit(node.context)
+        visit(node.rule)
+        return
+      case "ref":
+        // Named reference — its definition is visited where declared (memo).
+        return
+    }
+  }
+
+  visit(rule)
+
+  return { terms: [...terms], facts: [...facts] }
+}
+
 export const relation = <Left, Right>(
   pairs?: ReadonlyArray<readonly [Left, Right]>,
   label?: string,

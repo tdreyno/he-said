@@ -564,12 +564,18 @@ export const seedFor = <TTables extends Record<string, AnyPgTable>>(
   }
 }
 
-/** The TS type of a table's `id` column value, when it has one. */
+/**
+ * The TS type of a table's resource-key value: the `id` column when present,
+ * otherwise `string` — the runtime selects the first primary-key column
+ * (see `selectResourceKey`), and in the id-string model this API serves,
+ * primary keys are string ids (uuid/text). A non-string single-column PK
+ * would need an explicit term type.
+ */
 type InferIdValue<TTable extends AnyPgTable> = TTable["$inferSelect"] extends {
   id: infer V
 }
   ? V
-  : unknown
+  : string
 
 /**
  * A table mints an id-typed term. The term's value is the row's primary key

@@ -1,5 +1,11 @@
 # @tdreyno/he-said
 
+## 0.9.1
+
+### Patch Changes
+
+- 65b7424: Resource-type terms are labeled with their table name, so deny proofs, debuggers, and mermaid diagrams show `exists(systems)` instead of an anonymous term.
+
 ## 0.9.0
 
 ### Minor Changes

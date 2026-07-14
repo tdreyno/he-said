@@ -51,6 +51,12 @@ export {
 } from "./core/algebra-postgres"
 export { associates, belongsTo } from "./core/algebra-postgres-helpers"
 export {
+  explainAllow,
+  summarizeRule,
+  type AllowChoice,
+  type AllowExplanation,
+} from "./core/explain"
+export {
   attachRelationSource,
   attachTermDomain,
   attachedRelationSource,

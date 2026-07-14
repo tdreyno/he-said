@@ -1,6 +1,11 @@
 import { and, exists, fact, factIsTrue, not, or, relation, term } from ".."
 import { annotateRule } from "../core/algebra"
-import { isRule, ruleToMermaid, rulesToMermaid } from "./index"
+import {
+  isRule,
+  ruleToMermaid,
+  rulesToMermaid,
+  traceRuleToMermaid,
+} from "./index"
 
 describe("mermaid decision trees", () => {
   const actor = term<string>("actor")
@@ -115,5 +120,61 @@ describe("mermaid decision trees", () => {
     expect(isRule({ type: "unrelated" })).toBe(false)
     expect(isRule(memberOfTeam)).toBe(false)
     expect(isRule(null)).toBe(false)
+  })
+
+  it("traceRuleToMermaid highlights the taken path to the terminal", async () => {
+    const { createInMemoryAdapter, evaluator } = await import("..")
+    const { associates } = await import("../core/algebra-postgres-helpers")
+
+    const engine = evaluator(
+      createInMemoryAdapter({
+        relationMappings: [
+          {
+            relation: memberOfTeam,
+            source: associates({
+              table: "team_members",
+              left: "user_id",
+              right: "team_id",
+            }),
+          },
+          {
+            relation: teamInWorkspace,
+            source: associates({
+              table: "teams",
+              left: "id",
+              right: "workspace_id",
+            }),
+          },
+        ],
+        termDomains: [{ term: teamT, table: "teams", valueColumn: "id" }],
+        seed: {
+          teams: [{ id: "team-a", workspace_id: "ws-1" }],
+          team_members: [
+            { user_id: "alice", team_id: "team-a", role: "editor" },
+          ],
+        },
+      }) as never,
+      { evaluatorContext: null },
+    )
+
+    const chart = await traceRuleToMermaid(
+      engine as never,
+      readRule,
+      {
+        [actor]: "alice",
+        [teamT]: "team-a",
+        [workspaceT]: "ws-1",
+        facts: { [isAppAdmin]: false },
+      },
+      { relationNames },
+    )
+
+    // isAppAdmin fails (thin edge), fall-through route is thick, ends at ALLOW
+    expect(chart).toContain("classDef path")
+    expect(chart).toMatch(/n\d+ == no ==> n\d+/)
+    expect(chart).toMatch(/n\d+ == yes ==> n0/)
+    expect(chart).toMatch(/class n\d+(,n\d+)* path/)
+    // the taken-path class list includes the ALLOW terminal (n0)
+    expect(chart).toMatch(/class [^\n]*n0[^\n]* path|class n0[^\n]* path/)
   })
 })

@@ -2,6 +2,7 @@ import {
   getRuleAnnotations,
   isAttributeAccessor,
   isFact,
+  type Environment,
   type PredicateExpression,
   type Rule,
   type SourcePredicate,
@@ -168,6 +169,8 @@ type EmitState = {
   nextId: number
   prefix: string
   options: MermaidOptions
+  /** Leaf decisions in emission order, for trace-path reconstruction. */
+  leaves: Array<{ id: string; rule: Rule; yes: string; no: string }>
 }
 
 const nextNode = (state: EmitState): string => {
@@ -313,6 +316,7 @@ const emitRule = (
       )
       emitYes(state, decision, onPass)
       emitNo(state, decision, onFail)
+      state.leaves.push({ id: decision, rule, yes: onPass, no: onFail })
       return decision
     }
   }
@@ -341,6 +345,7 @@ export const ruleToMermaid = (
     nextId: 0,
     prefix: "n",
     options,
+    leaves: [],
   }
   const { allow, deny } = emitOutcomes(state)
   emitRule(rule, state, allow, deny)
@@ -362,6 +367,7 @@ export const rulesToMermaid = (
     nextId: 0,
     prefix: "n",
     options,
+    leaves: [],
   }
 
   let subgraphIndex = 0
@@ -377,4 +383,72 @@ export const rulesToMermaid = (
   }
 
   return state.lines.join("\n")
+}
+
+interface TraceEngine<Env extends Environment> {
+  evaluate(rule: Rule, environment: Readonly<Env>): Promise<boolean>
+}
+
+/**
+ * Decision tree WITH the actual evaluation path highlighted: each leaf check
+ * is evaluated against `environment` through `engine`, the traversed route
+ * from the entry decision to ALLOW/DENY is drawn with thick edges, and
+ * visited decisions get the `path` class. Diagram + proof in one artifact.
+ *
+ * Leaf checks are evaluated independently — exact for fully bound
+ * environments (the typical can(actor, resource) shape); alternatives
+ * correlated through shared FREE terms can mis-attribute, same as proofs.
+ */
+export const traceRuleToMermaid = async <Env extends Environment>(
+  engine: TraceEngine<Env>,
+  rule: Rule,
+  environment: Readonly<Env>,
+  options: MermaidOptions = {},
+): Promise<string> => {
+  const state: EmitState = {
+    lines: [
+      `flowchart ${options.direction ?? "TD"}`,
+      ...STYLE_LINES,
+      "  classDef path stroke:#f9ab00,stroke-width:3px",
+    ],
+    nextId: 0,
+    prefix: "n",
+    options,
+    leaves: [],
+  }
+  const { allow, deny } = emitOutcomes(state)
+  const entry = emitRule(rule, state, allow, deny)
+
+  // Evaluate each leaf check once (dedup by rule node identity).
+  const verdicts = new Map<Rule, boolean>()
+  for (const leaf of state.leaves) {
+    if (!verdicts.has(leaf.rule)) {
+      verdicts.set(leaf.rule, await engine.evaluate(leaf.rule, environment))
+    }
+  }
+
+  // Walk the short-circuit route from the entry decision to a terminal.
+  const leavesById = new Map(state.leaves.map(leaf => [leaf.id, leaf]))
+  const visited = new Set<string>()
+  const takenEdges = new Set<string>()
+  let current = entry
+  while (leavesById.has(current)) {
+    const leaf = leavesById.get(current)!
+    visited.add(current)
+    const verdict = verdicts.get(leaf.rule)!
+    const target = verdict ? leaf.yes : leaf.no
+    takenEdges.add(`  ${current} -- ${verdict ? "yes" : "no"} --> ${target}`)
+    current = target
+  }
+  visited.add(current) // the terminal reached
+
+  // Thicken taken edges; tag visited nodes.
+  const lines = state.lines.map(line =>
+    takenEdges.has(line)
+      ? line.replace(" -- ", " == ").replace(" --> ", " ==> ")
+      : line,
+  )
+  lines.push(`  class ${[...visited].join(",")} path`)
+
+  return lines.join("\n")
 }

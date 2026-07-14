@@ -830,3 +830,39 @@ describe("resourceType", () => {
     ).resolves.toBe(false)
   })
 })
+
+describe("path intermediate labels", () => {
+  it("labels intermediates from the next hop's source table", async () => {
+    const { relationWithSource } = await import("../core/self-describing")
+    const { belongsTo } = await import("../core/algebra-postgres-helpers")
+    const { getTermInfo, term: mkTerm } = await import("../core/algebra")
+
+    const patchInBranch = relationWithSource(
+      belongsTo({ table: "draft_patches", fk: "branch_id" }),
+    )
+    const branchInSystem = relationWithSource(
+      belongsTo({ table: "branches", fk: "system_id" }),
+    )
+
+    const resource = mkTerm("patch")
+    const scope = mkTerm("system")
+    const rule = through(patchInBranch, branchInSystem)(resource, scope)
+
+    // the AND's first step relates resource -> intermediate; read its label
+    const first = (rule as { children: Array<{ right: symbol }> }).children[0]!
+    expect(getTermInfo(first.right as never).root.description).toBe(
+      "rules.term.via branches",
+    )
+  })
+
+  it("falls back to positional labels for unattributed relations", () => {
+    const a = relation()
+    const b = relation()
+    const resource = term("r")
+    const scope = term("s")
+
+    const rule = through(a, b)(resource, scope)
+    const first = (rule as { children: Array<{ right: symbol }> }).children[0]!
+    expect((first.right as symbol).description).toBe("rules.term.rebac.path.0")
+  })
+})

@@ -12,6 +12,7 @@ import {
   type Term,
 } from "../core/algebra"
 import type { PostgresTermDomainSource } from "../core/algebra-postgres"
+import { attachedRelationSource } from "../core/self-describing"
 import { isResourceType, type ResourceType } from "./resource-type"
 
 type AnyScopePath = ScopePath<any, any>
@@ -213,6 +214,15 @@ export function through(
     chain: ReadonlyArray<Relation<any, any>>,
     anchors: ReadonlyArray<Term<unknown>>,
   ): ThroughPath<unknown, unknown> => {
+    // Path intermediates are anonymous join variables; label each from the
+    // NEXT hop's source table (the table the intermediate's id keys into) so
+    // proofs and diagrams read "via branches" instead of "rebac.path.0".
+    const intermediateLabel = (index: number): string => {
+      const nextHop = chain[index + 1]
+      const source = nextHop ? attachedRelationSource(nextHop.id) : undefined
+      return source ? `via ${source.table}` : `rebac.path.${index}`
+    }
+
     const path = ((resource, scope) => {
       if (anchors.length > Math.max(0, chain.length - 1)) {
         throw new Error("through.at() anchors exceed intermediate path steps")
@@ -226,7 +236,7 @@ export function through(
         const next: Term<unknown> = isLast
           ? (scope as unknown as Term<unknown>)
           : ((anchors[index] ??
-              term<unknown>(`rebac.path.${index}`)) as Term<unknown>)
+              term<unknown>(intermediateLabel(index))) as Term<unknown>)
         steps.push(
           (entry as unknown as Relation<unknown, unknown>)(current, next),
         )

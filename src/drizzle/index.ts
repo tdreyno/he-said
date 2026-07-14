@@ -17,6 +17,7 @@ import {
   type AttributeAccessor,
   type Environment,
   type Relation,
+  type Rule,
   type SourcePredicate,
   type Term,
 } from "../core/algebra"
@@ -398,6 +399,45 @@ export const drizzleResourceType = <
     context,
     owner: options.owner,
   })
+}
+
+/**
+ * `drizzleResourceType`, typed for the id-string term model: environments
+ * bind bare primary-key values, so the resource term (and ownership paths,
+ * grants, and context terms) flow as the pk's TS type instead of the full
+ * `$inferSelect` row — the library owns that assertion ONCE, instead of
+ * every consumer writing a narrowing cast. Also threads the optional
+ * `existence` override (composite refs where an id-only exists() is weaker
+ * than the caller's ref) through to the resource type.
+ */
+export const idResourceType = <
+  TTable extends AnyPgTable,
+  Scope = string,
+  Context extends Record<string, Term<string>> = Record<never, never>,
+>(
+  table: TTable,
+  options: {
+    owner: ScopePath<InferIdValue<TTable>, Scope>
+    contextTerms?: Context
+    fixed?: Readonly<Record<string, unknown>>
+    existence?: (resource: Term<InferIdValue<TTable>>, context: Context) => Rule
+  },
+): ResourceType<InferIdValue<TTable>, Scope, Context> => {
+  const base = drizzleResourceType(table, {
+    owner: options.owner as never,
+    ...(options.contextTerms ? { contextTerms: options.contextTerms } : {}),
+    ...(options.fixed ? { fixed: options.fixed } : {}),
+  }) as unknown as ResourceType<InferIdValue<TTable>, Scope, Context>
+
+  const existence = options.existence
+  if (!existence) {
+    return base
+  }
+
+  return {
+    ...base,
+    exists: () => existence(base.term, base._context),
+  }
 }
 
 export const rowVar = <TTable extends AnyPgTable>(

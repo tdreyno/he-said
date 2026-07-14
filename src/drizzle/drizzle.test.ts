@@ -1,7 +1,7 @@
 import { pgTable, primaryKey, text } from "drizzle-orm/pg-core"
 import { attr, exists, planPostgresRule, relation, term } from ".."
 import { getTermInfo } from "../core/algebra"
-import { attachedTermDomain } from "../core/self-describing"
+import { attachedTermDomain, relationWithSource } from "../core/self-describing"
 import { through } from "../rebac"
 import {
   associatesTable,
@@ -10,6 +10,7 @@ import {
   drizzleResourceType,
   edge,
   fromFk,
+  idResourceType,
   idVar,
   inColumn,
   rowVar,
@@ -291,5 +292,45 @@ describe("drizzle bridge", () => {
     expect(() => build({ teams: [{ ident: "x" } as never] })).toThrow(
       'seedFor: table "teams" has no column property "ident"',
     )
+  })
+})
+
+describe("idResourceType", () => {
+  it("builds a pk-typed resource with no consumer casts", () => {
+    const teams = pgTable("teams_idrt", { id: text("id").primaryKey() })
+    const systems = pgTable("systems_idrt", {
+      id: text("id").primaryKey(),
+      teamId: text("team_id").references(() => teams.id),
+    })
+
+    const systemInTeam = fromFk<string, string>(systems.teamId, teams)
+    const resource = idResourceType(systems, {
+      owner: through(systemInTeam),
+    })
+
+    const teamT = idVar(teams)
+    const rule = resource.ownedBy(teamT)
+    expect(rule.type).toBe("and") // through(...) wraps steps in a conjunction
+    expect(resource.key).toBe("id")
+  })
+
+  it("threads the existence override through", () => {
+    const branches = pgTable("branches_idrt", { id: text("id").primaryKey() })
+    const nodes = pgTable("nodes_idrt", {
+      id: text("id").primaryKey(),
+      branchId: text("branch_id").notNull(),
+    })
+    const inBranch = relationWithSource<string, string>(
+      edge(nodes.id, nodes.branchId),
+    )
+    const branchT = idVar(branches)
+
+    const resource = idResourceType(nodes, {
+      contextTerms: { branchId: branchT },
+      owner: through(inBranch),
+      existence: resourceTerm => inBranch(resourceTerm, branchT),
+    })
+
+    expect(resource.exists().type).toBe("relation")
   })
 })

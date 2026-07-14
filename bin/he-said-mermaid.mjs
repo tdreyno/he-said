@@ -40,7 +40,7 @@ const mermaidModule = await (async () => {
   }
 })()
 
-const { isRule, ruleToMermaid, rulesToMermaid } = mermaidModule
+const { isRule, ruleToMermaid } = mermaidModule
 
 const moduleUrl = modulePath.startsWith(".")
   ? pathToFileURL(resolve(process.cwd(), modulePath)).href
@@ -100,13 +100,20 @@ for (const name of selected) {
   }
 
   console.log(`## ${name}\n`)
-  console.log("```mermaid")
-  console.log(
+
+  // One mermaid block PER rule: renderers cap edges per chart (~500), and a
+  // policy-sized combined flowchart blows past it — separate blocks each
+  // render independently and give the doc navigable headings.
+  const singleRule =
     "rule" in flat && isRule(flat.rule) && Object.keys(flat).length === 1
-      ? ruleToMermaid(flat.rule, options)
-      : rulesToMermaid(flat, options),
-  )
-  console.log("```\n")
+  for (const [ruleName, rule] of Object.entries(flat)) {
+    if (!singleRule) {
+      console.log(`### ${ruleName}\n`)
+    }
+    console.log("```mermaid")
+    console.log(ruleToMermaid(rule, options))
+    console.log("```\n")
+  }
   rendered += 1
 }
 

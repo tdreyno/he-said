@@ -2,7 +2,7 @@ import { and, exists, fact, factIsTrue, not, or, relation, term } from ".."
 import { annotateRule } from "../core/algebra"
 import { isRule, ruleToMermaid, rulesToMermaid } from "./index"
 
-describe("mermaid flow charts", () => {
+describe("mermaid decision trees", () => {
   const actor = term<string>("actor")
   const teamT = term<string>("team")
   const workspaceT = term<string>("workspace")
@@ -28,38 +28,57 @@ describe("mermaid flow charts", () => {
     ),
   )
 
-  it("renders junctions, relations, predicates, facts, and existence", () => {
+  it("renders decisions with ALLOW/DENY outcomes", () => {
     const chart = ruleToMermaid(readRule, { relationNames })
 
     expect(chart).toContain("flowchart TD")
-    expect(chart).toContain('{{"OR"}}')
-    expect(chart).toContain('{{"AND"}}')
-    expect(chart).toContain('(["exists(team)"])')
+    expect(chart).toContain('(["ALLOW"]):::allow')
+    expect(chart).toContain('(["DENY"]):::deny')
+    expect(chart).toContain('{"isAppAdmin?"}')
+    expect(chart).toContain('{"team exists?"}')
     expect(chart).toContain(
-      "memberOfTeam(actor → team) [role in ['editor', 'admin', 'owner']]",
+      "memberOfTeam: actor → team with role in ['editor', 'admin', 'owner']?",
     )
-    expect(chart).toContain("teamInWorkspace(team → workspace)")
-    expect(chart).toContain("fact isAppAdmin")
   })
 
-  it("falls back to generic labels for anonymous relations", () => {
-    const chart = ruleToMermaid(memberOfTeam(actor, teamT))
+  it("AND chains follow yes edges; failure falls through to the next OR branch", () => {
+    const chart = ruleToMermaid(
+      or(and(factIsTrue(isAppAdmin), exists(teamT)), exists(workspaceT)),
+    )
+    const lines = chart.split("\n")
 
-    expect(chart).toContain("relation(actor → team)")
+    const idOf = (label: string) =>
+      lines
+        .find(line => line.includes(label))!
+        .trim()
+        .split("{")[0]!
+
+    const admin = idOf("isAppAdmin?")
+    const teamExists = idOf("team exists?")
+    const wsExists = idOf("workspace exists?")
+
+    // and: admin yes → team exists
+    expect(chart).toContain(`${admin} -- yes --> ${teamExists}`)
+    // or fall-through: both AND members fail into the second alternative
+    expect(chart).toContain(`${admin} -- no --> ${wsExists}`)
+    expect(chart).toContain(`${teamExists} -- no --> ${wsExists}`)
+    // terminal wiring: n0=ALLOW, n1=DENY
+    expect(chart).toContain(`${teamExists} -- yes --> n0`)
+    expect(chart).toContain(`${wsExists} -- no --> n1`)
   })
 
-  it("renders NOT with an edge to its child", () => {
+  it("NOT swaps the yes/no targets", () => {
     const chart = ruleToMermaid(not(exists(teamT)))
-
-    expect(chart).toContain('n0{{"NOT"}}')
-    expect(chart).toContain("n0 --> n1")
+    // n0=ALLOW, n1=DENY: negation sends yes to DENY, no to ALLOW
+    expect(chart).toContain("-- yes --> n1")
+    expect(chart).toContain("-- no --> n0")
   })
 
   it("uses rule annotations as label prefixes", () => {
     const annotated = annotateRule(exists(teamT), { label: "target row" })
     const chart = ruleToMermaid(annotated)
 
-    expect(chart).toContain("target row: exists(team)")
+    expect(chart).toContain("target row: team exists?")
   })
 
   it("escapes double quotes in labels", () => {
@@ -70,7 +89,7 @@ describe("mermaid flow charts", () => {
     expect(chart).not.toContain('""team""')
   })
 
-  it("renders a named rule set as one flowchart with subgraphs", () => {
+  it("renders a named rule set with per-subgraph outcomes and unique ids", () => {
     const chart = rulesToMermaid(
       {
         read: readRule,
@@ -83,7 +102,9 @@ describe("mermaid flow charts", () => {
     expect(chart).toContain('subgraph s0["read"]')
     expect(chart).toContain('subgraph s1["delete"]')
     expect(chart).not.toContain("manage")
-    // node ids stay unique across subgraphs
+    expect(chart.match(/\(\["ALLOW"\]\):::allow/g)).toHaveLength(2)
+    expect(chart.match(/\(\["DENY"\]\):::deny/g)).toHaveLength(2)
+
     const ids = [...chart.matchAll(/^ {2}(n\d+)[[({]/gm)].map(match => match[1])
     expect(new Set(ids).size).toBe(ids.length)
   })

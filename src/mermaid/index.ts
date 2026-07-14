@@ -8,10 +8,12 @@ import {
 } from "../core/algebra"
 
 /**
- * Mermaid flow charts from rule algebra: walk a Rule tree and emit a
- * `flowchart` document, so a policy's shape — the ANDs, ORs, relation hops,
- * predicates, and existence checks behind each action — is reviewable as a
- * diagram instead of nested combinators.
+ * Mermaid DECISION TREES from rule algebra: each check (relation hop, fact,
+ * existence, predicate) becomes a yes/no decision node, AND chains follow
+ * the "yes" edges, OR alternatives are the "no"-edge fall-throughs, and
+ * every path terminates in ALLOW or DENY — the chart reads as the
+ * short-circuit evaluation a reviewer would trace by hand, not as a
+ * boolean-algebra structure diagram.
  *
  * Relations and terms are runtime Symbols; readable labels come from (in
  * precedence order) the options' name maps, rule annotations, and the
@@ -174,26 +176,19 @@ const nextNode = (state: EmitState): string => {
   return id
 }
 
-/** Emit one node, returning its id. Shapes: junctions {{ }}, checks ([ ]), leaves [ ]. */
-const emitNode = (
-  state: EmitState,
-  shape: "junction" | "check" | "leaf",
-  label: string,
-): string => {
+/** Emit a yes/no decision node (rhombus), returning its id. */
+const emitDecision = (state: EmitState, label: string): string => {
   const id = nextNode(state)
-  const escaped = escapeLabel(label)
-  if (shape === "junction") {
-    state.lines.push(`  ${id}{{"${escaped}"}}`)
-  } else if (shape === "check") {
-    state.lines.push(`  ${id}(["${escaped}"])`)
-  } else {
-    state.lines.push(`  ${id}["${escaped}"]`)
-  }
+  state.lines.push(`  ${id}{"${escapeLabel(label)}"}`)
   return id
 }
 
-const emitEdge = (state: EmitState, from: string, to: string): void => {
-  state.lines.push(`  ${from} --> ${to}`)
+const emitYes = (state: EmitState, from: string, to: string): void => {
+  state.lines.push(`  ${from} -- yes --> ${to}`)
+}
+
+const emitNo = (state: EmitState, from: string, to: string): void => {
+  state.lines.push(`  ${from} -- no --> ${to}`)
 }
 
 const annotatedLabel = (rule: Rule, base: string): string => {
@@ -201,70 +196,9 @@ const annotatedLabel = (rule: Rule, base: string): string => {
   return label ? `${label}: ${base}` : base
 }
 
-const emitRule = (rule: Rule, state: EmitState): string => {
-  const { options } = state
-
+/** The question a leaf check asks, phrased for a decision node. */
+const leafLabel = (rule: Rule, options: MermaidOptions): string => {
   switch (rule.type) {
-    case "and":
-    case "or": {
-      const junction = emitNode(
-        state,
-        "junction",
-        annotatedLabel(rule, rule.type.toUpperCase()),
-      )
-      rule.children.forEach(child => {
-        emitEdge(state, junction, emitRule(child, state))
-      })
-      return junction
-    }
-
-    case "not": {
-      const junction = emitNode(state, "junction", annotatedLabel(rule, "NOT"))
-      emitEdge(state, junction, emitRule(rule.child, state))
-      return junction
-    }
-
-    case "forall": {
-      const junction = emitNode(
-        state,
-        "junction",
-        annotatedLabel(
-          rule,
-          `FORALL ${symbolLabel(rule.term, options.termNames, "term")}`,
-        ),
-      )
-      emitEdge(state, junction, emitRule(rule.child, state))
-      return junction
-    }
-
-    case "given": {
-      const junction = emitNode(
-        state,
-        "junction",
-        annotatedLabel(rule, "GIVEN"),
-      )
-      const context = emitRule(rule.context, state)
-      const inner = emitRule(rule.rule, state)
-      state.lines.push(`  ${junction} -->|context| ${context}`)
-      state.lines.push(`  ${junction} -->|rule| ${inner}`)
-      return junction
-    }
-
-    case "select":
-    case "distinct":
-      // Planner hints — invisible to authorization semantics; pass through.
-      return emitRule(rule.child, state)
-
-    case "memo": {
-      const junction = emitNode(
-        state,
-        "junction",
-        annotatedLabel(rule, `MEMO ${rule.name}`),
-      )
-      emitEdge(state, junction, emitRule(rule.child, state))
-      return junction
-    }
-
     case "relation": {
       const name = symbolLabel(
         rule.relationId,
@@ -274,125 +208,157 @@ const emitRule = (rule: Rule, state: EmitState): string => {
       const left = symbolLabel(rule.left, options.termNames, "left")
       const right = symbolLabel(rule.right, options.termNames, "right")
       const predicates = (rule.predicates ?? [])
-        .map(predicate => ` [${formatSourcePredicate(predicate)}]`)
+        .map(predicate => ` with ${formatSourcePredicate(predicate)}`)
         .join("")
-      return emitNode(
-        state,
-        "leaf",
-        annotatedLabel(rule, `${name}(${left} → ${right})${predicates}`),
-      )
+      return `${name}: ${left} → ${right}${predicates}?`
     }
 
     case "exists":
-      return emitNode(
-        state,
-        "check",
-        annotatedLabel(
-          rule,
-          `exists(${symbolLabel(rule.term, options.termNames, "term")})`,
-        ),
-      )
+      return `${symbolLabel(rule.term, options.termNames, "term")} exists?`
 
     case "eq-term":
-      return emitNode(
-        state,
-        "check",
-        annotatedLabel(
-          rule,
-          `${symbolLabel(rule.left, options.termNames, "left")} = ${symbolLabel(
-            rule.right,
-            options.termNames,
-            "right",
-          )}`,
-        ),
-      )
+      return `${symbolLabel(rule.left, options.termNames, "left")} = ${symbolLabel(
+        rule.right,
+        options.termNames,
+        "right",
+      )}?`
 
     case "eq-value": {
-      const kind = isFact(rule.term) ? "fact " : ""
-      return emitNode(
-        state,
-        "check",
-        annotatedLabel(
-          rule,
-          `${kind}${symbolLabel(rule.term, options.termNames, "term")} = ${formatValue(rule.value)}`,
-        ),
-      )
+      const name = symbolLabel(rule.term, options.termNames, "term")
+      if (isFact(rule.term) && rule.value === true) {
+        return `${name}?`
+      }
+      return `${name} = ${formatValue(rule.value)}?`
     }
 
     case "term":
-      return emitNode(
-        state,
-        "check",
-        annotatedLabel(
-          rule,
-          `${isFact(rule.term) ? "fact " : ""}${symbolLabel(
-            rule.term,
-            options.termNames,
-            "term",
-          )}`,
-        ),
-      )
+      return `${symbolLabel(rule.term, options.termNames, "term")}?`
 
     case "unary": {
       const term = symbolLabel(rule.term, options.termNames, "term")
-      const label = isPredicateExpressionValue(rule.predicate)
-        ? formatPredicateExpression(rule.predicate, options)
-        : `predicate(${term})`
-      return emitNode(state, "check", annotatedLabel(rule, label))
+      return isPredicateExpressionValue(rule.predicate)
+        ? `${formatPredicateExpression(rule.predicate, options)}?`
+        : `predicate(${term})?`
     }
 
     case "derives":
-      return emitNode(
-        state,
-        "check",
-        annotatedLabel(
-          rule,
-          `derives(${symbolLabel(rule.entity, options.termNames, "entity")} ← ${symbolLabel(
-            rule.from,
-            options.termNames,
-            "from",
-          )})`,
-        ),
-      )
+      return `${symbolLabel(rule.entity, options.termNames, "entity")} derives from ${symbolLabel(
+        rule.from,
+        options.termNames,
+        "from",
+      )}?`
 
     case "ref":
-      return emitNode(state, "leaf", annotatedLabel(rule, `ref: ${rule.name}`))
+      return `${rule.name}?`
+
+    default:
+      throw new Error(`not a leaf rule node: ${rule.type}`)
+  }
+}
+
+/**
+ * Emit `rule` as short-circuit decisions: evaluation enters at the returned
+ * node id; every internal path eventually reaches `onPass` or `onFail`.
+ * AND wires each child's "yes" to the next child; OR wires each
+ * alternative's failure to the next alternative; NOT swaps the targets.
+ */
+const emitRule = (
+  rule: Rule,
+  state: EmitState,
+  onPass: string,
+  onFail: string,
+): string => {
+  const { options } = state
+
+  switch (rule.type) {
+    case "and": {
+      let next = onPass
+      for (let index = rule.children.length - 1; index >= 0; index -= 1) {
+        next = emitRule(rule.children[index]!, state, next, onFail)
+      }
+      return next
+    }
+
+    case "or": {
+      let next = onFail
+      for (let index = rule.children.length - 1; index >= 0; index -= 1) {
+        next = emitRule(rule.children[index]!, state, onPass, next)
+      }
+      return next
+    }
+
+    case "not":
+      return emitRule(rule.child, state, onFail, onPass)
+
+    case "given":
+      // Context must hold, then the rule — an AND in evaluation order.
+      return emitRule(
+        rule.context,
+        state,
+        emitRule(rule.rule, state, onPass, onFail),
+        onFail,
+      )
+
+    case "forall":
+    case "select":
+    case "distinct":
+    case "memo":
+      // Quantifier/planner wrappers — decisions flow through the child.
+      return emitRule(rule.child, state, onPass, onFail)
 
     default: {
-      const exhausted: never = rule
-      throw new Error(
-        `unknown rule node type: ${(exhausted as { type?: string }).type}`,
+      const decision = emitDecision(
+        state,
+        annotatedLabel(rule, leafLabel(rule, options)),
       )
+      emitYes(state, decision, onPass)
+      emitNo(state, decision, onFail)
+      return decision
     }
   }
 }
 
-/** One rule → one `flowchart` document. */
+const STYLE_LINES = [
+  "  classDef allow fill:#e6f4ea,stroke:#137333,color:#137333",
+  "  classDef deny fill:#fce8e6,stroke:#c5221f,color:#c5221f",
+]
+
+const emitOutcomes = (state: EmitState): { allow: string; deny: string } => {
+  const allow = nextNode(state)
+  state.lines.push(`  ${allow}(["ALLOW"]):::allow`)
+  const deny = nextNode(state)
+  state.lines.push(`  ${deny}(["DENY"]):::deny`)
+  return { allow, deny }
+}
+
+/** One rule → one decision-tree `flowchart` ending in ALLOW / DENY. */
 export const ruleToMermaid = (
   rule: Rule,
   options: MermaidOptions = {},
 ): string => {
   const state: EmitState = {
-    lines: [`flowchart ${options.direction ?? "TD"}`],
+    lines: [`flowchart ${options.direction ?? "TD"}`, ...STYLE_LINES],
     nextId: 0,
     prefix: "n",
     options,
   }
-  emitRule(rule, state)
+  const { allow, deny } = emitOutcomes(state)
+  emitRule(rule, state, allow, deny)
   return state.lines.join("\n")
 }
 
 /**
  * A named rule set — e.g. a policy's per-action rules, or a whole
  * `Record<resource, Record<action, Rule>>` flattened by the caller — as one
- * flowchart with a subgraph per entry. Null/undefined entries are skipped.
+ * flowchart with a decision-tree subgraph (own ALLOW/DENY) per entry.
+ * Null/undefined entries are skipped.
  */
 export const rulesToMermaid = (
   rules: Readonly<Record<string, Rule | null | undefined>>,
   options: MermaidOptions = {},
 ): string => {
   const state: EmitState = {
-    lines: [`flowchart ${options.direction ?? "TD"}`],
+    lines: [`flowchart ${options.direction ?? "TD"}`, ...STYLE_LINES],
     nextId: 0,
     prefix: "n",
     options,
@@ -405,7 +371,8 @@ export const rulesToMermaid = (
     }
     state.lines.push(`  subgraph s${subgraphIndex}["${escapeLabel(name)}"]`)
     subgraphIndex += 1
-    emitRule(rule, state)
+    const { allow, deny } = emitOutcomes(state)
+    emitRule(rule, state, allow, deny)
     state.lines.push("  end")
   }
 

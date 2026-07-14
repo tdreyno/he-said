@@ -16,6 +16,11 @@ import {
   type SourcePredicate,
   type Term,
 } from "./algebra"
+import type {
+  PostgresRelationSource,
+  PostgresTermDomainSource,
+} from "./algebra-postgres"
+import { attachedRelationSource } from "./self-describing"
 
 type AnyTerm = Term<unknown>
 
@@ -1388,6 +1393,121 @@ export interface InMemoryAdapterOptions {
   domain?: ReadonlyArray<unknown>
 }
 
+/**
+ * Seed mode: instead of restating relation facts, provide the SAME relation
+ * mappings and term domains the Postgres adapter uses, plus seeded table
+ * rows. Pairs, source predicates, and `exists` domains all derive from the
+ * production sources — a predicate change in the model changes in-memory
+ * verdicts immediately, with no fixture to keep in sync.
+ */
+export interface InMemorySeedAdapterOptions {
+  relationMappings: ReadonlyArray<
+    | { relation: Relation<any, any>; source: PostgresRelationSource }
+    | Relation<any, any>
+  >
+  termDomains?: ReadonlyArray<PostgresTermDomainSource<any>>
+  /** Rows per table, keyed by (optionally schema-qualified) table name. */
+  seed: Readonly<Record<string, ReadonlyArray<Record<string, unknown>>>>
+}
+
+const isSeedOptions = (
+  options: InMemoryAdapterOptions | InMemorySeedAdapterOptions,
+): options is InMemorySeedAdapterOptions => {
+  return "seed" in options
+}
+
+const seedTableRows = (
+  seed: InMemorySeedAdapterOptions["seed"],
+  table: string,
+): ReadonlyArray<Record<string, unknown>> => {
+  const exact = seed[table]
+  if (exact) {
+    return exact
+  }
+  const unqualified = table.includes(".")
+    ? table.slice(table.lastIndexOf(".") + 1)
+    : table
+  return seed[unqualified] ?? []
+}
+
+const requireNoStaticFilters = (
+  staticFilters: ReadonlyArray<unknown> | undefined,
+  context: string,
+): void => {
+  if (staticFilters && staticFilters.length > 0) {
+    throw new Error(
+      `in-memory seed mode cannot evaluate staticFilters SQL for ${context} — use structured predicates instead`,
+    )
+  }
+}
+
+const seedToStandardOptions = (
+  options: InMemorySeedAdapterOptions,
+): InMemoryAdapterOptions => {
+  const relations = options.relationMappings.map(entry => {
+    const normalized =
+      typeof entry === "function"
+        ? { relation: entry, source: attachedRelationSource(entry.id) }
+        : entry
+    const { relation, source } = normalized
+    if (!source) {
+      throw new Error(
+        "in-memory seed mode requires a relation source (an explicit mapping or a self-describing relation)",
+      )
+    }
+    requireNoStaticFilters(source.staticFilters, `table "${source.table}"`)
+
+    // SQL joins never match NULL columns — drop those rows for parity.
+    const rows = seedTableRows(options.seed, source.table)
+      .filter(
+        row =>
+          row[source.leftColumn] !== null &&
+          row[source.leftColumn] !== undefined &&
+          row[source.rightColumn] !== null &&
+          row[source.rightColumn] !== undefined,
+      )
+      .map(row => ({
+        left: row[source.leftColumn],
+        right: row[source.rightColumn],
+        columns: row,
+      }))
+
+    return {
+      relation,
+      pairs: [],
+      rows,
+      predicates: source.predicates,
+      orderings: source.orderings,
+    }
+  })
+
+  const domainValues: Array<unknown> = []
+  options.termDomains?.forEach(domain => {
+    requireNoStaticFilters(
+      domain.staticFilters,
+      `term domain "${domain.table}"`,
+    )
+    seedTableRows(options.seed, domain.table).forEach(row => {
+      const factRow: InMemoryFactRow = {
+        left: undefined,
+        right: undefined,
+        columns: row,
+      }
+      const matches = (domain.predicates ?? []).every(predicate =>
+        rowMatchesPredicate(factRow, predicate, domain.orderings),
+      )
+      if (matches) {
+        domainValues.push(row[domain.valueColumn])
+      }
+    })
+  })
+
+  return {
+    relations,
+    domain: [...new Set(domainValues)],
+  }
+}
+
 const isRelation = (
   value: InMemoryRelationFacts<any, any> | Relation<any, any>,
 ): value is Relation<any, any> => {
@@ -1450,10 +1570,13 @@ export const createInMemoryAdapter = <
   Env extends Environment = Environment,
   EvaluatorContext = unknown,
 >(
-  options: InMemoryAdapterOptions,
+  options: InMemoryAdapterOptions | InMemorySeedAdapterOptions,
 ): EvaluatorAdapter<Env, EvaluatorContext> => {
-  const facts = buildFacts(options.relations)
-  const globalDomain = options.domain ?? []
+  const normalized = isSeedOptions(options)
+    ? seedToStandardOptions(options)
+    : options
+  const facts = buildFacts(normalized.relations)
+  const globalDomain = normalized.domain ?? []
 
   return {
     async evaluate(rule, environment) {

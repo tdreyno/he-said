@@ -90,6 +90,7 @@ export type {
   InMemoryAdapterOptions,
   InMemoryRelationFacts,
   InMemoryRelationRow,
+  InMemorySeedAdapterOptions,
 } from "./core/algebra-inmemory"
 export type {
   PlannedPostgresRule,

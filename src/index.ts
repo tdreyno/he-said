@@ -57,6 +57,15 @@ export {
   type AllowExplanation,
 } from "./core/explain"
 export {
+  analyzePolicy,
+  ruleEquals,
+  type AnalyzePolicyOptions,
+  type PolicyFinding,
+  type PolicyFindingKind,
+} from "./core/analyze"
+export { diffRules, type RuleChange, type RuleChangeKind } from "./core/diff"
+export { bindEnvironment } from "./core/bind-environment"
+export {
   attachRelationSource,
   attachTermDomain,
   attachedRelationSource,

@@ -1,5 +1,23 @@
 # @tdreyno/he-said
 
+## 0.11.0
+
+### Minor Changes
+
+- a038877: `analyzePolicy(rules, { relations? })` — static policy linting: finds OR alternatives subsumed by a more general sibling (dead grants that can never change a verdict), duplicated branches, contradictions buried among other conjuncts (the pure `and(X, not(X))` never-idiom that `grant.deny` compiles to is deliberately exempt), and declared relations no rule references. `ruleEquals` (structural rule equality) is exported alongside.
+- 357a8be: `bindEnvironment(engine, base)` — principal pre-binding: wrap an evaluator instance with a base environment (the actor and their facts, computed once per request) so every subsequent check supplies only per-check bindings. Call-site bindings win; facts bags merge; `filter()` receives flattened fact bindings. The DX seam for "an engine scoped to this principal".
+- aa1d9f4: `collectRuleTerms(rule)` reports every term and fact a rule references (normalized to roots, facts separated since they must be bound) — so consumers can assert environment completeness explicitly instead of discovering a silent free join.
+- 012660a: `diffRules(before, after)` — semantic policy diffing at the rule-tree level: added/removed OR alternatives, tightened/loosened grants (AND conjuncts), reorders, and added/removed named rules, all described in policy language via structural summaries. Ideal for CI comments on policy PRs; complements SQL golden snapshots, which churn on planner-only changes.
+- 04a57f7: `explainAllow(engine, rule, env)` — the allow-side twin of deny proofs: re-evaluates OR alternatives in order and reports the winning choices (outermost first), labeled from rule annotations or structural summaries via the new `summarizeRule`. Answers "why did this actor get in" for audits and support without reading SQL.
+- ff6de1f: `idResourceType(table, options)` — the pk-typed sibling of `drizzleResourceType`: environments bind bare primary-key values, so the resource term, ownership paths, grants, and context terms flow as the pk's TS type instead of the full `$inferSelect` row — the library owns that assertion once, eliminating consumer-side narrowing casts. Also threads the `existence` override (composite refs) through to the resource type.
+- ffab14b: Errors and diagnostics name their symbols: `relation(pairs?, label?)` accepts a label, `relationWithSource` auto-labels from its source (`table.rightColumn`), and planner errors (missing relation mapping, missing term domain for `exists`/`attr`) include the offending term/relation name via the new exported `describeAlgebraSymbol` helper.
+- 5c76e98: Seed-mode safety: the in-memory adapter throws on seed tables no relation source or term domain reads (a typo'd table name previously read as an empty table — deny — letting deny-expecting tests pass for the wrong reason), and the new drizzle `seedFor(tables)` builder accepts compiler-checked camelCase rows (`Partial<$inferSelect>`) and converts them to the column-keyed seed shape.
+- 7c75aad: `traceRuleToMermaid(engine, rule, environment, options?)` renders the decision tree with the ACTUAL evaluation path highlighted: leaf checks are evaluated through the given engine, the traversed route to ALLOW/DENY is drawn with thick edges, and visited decisions get a `path` class — diagram and proof in one artifact for debugging a specific verdict.
+
+### Patch Changes
+
+- 0877d4c: ReBAC path intermediates are labeled from the next hop's source table ("via branches") instead of positional "rebac.path.N", so proofs and mermaid diagrams name every variable in an ownership chain. Unattributed relations keep the positional fallback.
+
 ## 0.10.0
 
 ### Minor Changes

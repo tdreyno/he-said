@@ -21,6 +21,7 @@ import {
   type Term,
 } from "../core/algebra"
 import { associates, belongsTo } from "../core/algebra-postgres-helpers"
+import { attachTermDomain, relationWithSource } from "../core/self-describing"
 import type { ScopePath } from "../rebac/rebac-builder"
 import { resourceType, type ResourceType } from "../rebac/resource-type"
 
@@ -52,7 +53,15 @@ const requireSingleColumn = (
   return columns[0]!
 }
 
-export const fromFk = (column: AnyPgColumn) => {
+export function fromFk(column: AnyPgColumn): PostgresEdgeRelationSource
+export function fromFk<Left = unknown, Right = unknown>(
+  column: AnyPgColumn,
+  target: AnyPgTable,
+): Relation<Left, Right>
+export function fromFk(
+  column: AnyPgColumn,
+  target?: AnyPgTable,
+): PostgresEdgeRelationSource | Relation<unknown, unknown> {
   const table = column.table as AnyPgTable
   const tableConfig = getTableConfig(table)
   const matchingFks = tableConfig.foreignKeys.filter(fk => {
@@ -81,11 +90,40 @@ export const fromFk = (column: AnyPgColumn) => {
     `fromFk(${column.name})`,
   )
 
-  return belongsTo({
+  const source = belongsTo({
     table: qualifyTable({ name: tableConfig.name, schema: tableConfig.schema }),
     fk: foreignColumn.name,
     pk: leftPrimaryKey.name,
   })
+
+  if (!target) {
+    return source
+  }
+
+  // The target argument exists purely for typing — validate it names the
+  // table the FK constraint actually references (fail-loud on drift).
+  const referencedColumn = requireSingleColumn(
+    reference.foreignColumns,
+    `fromFk(${column.name})`,
+  )
+  const referencedTable = referencedColumn.table as AnyPgTable
+  const referencedConfig = getTableConfig(referencedTable)
+  const targetConfig = getTableConfig(target)
+  const referencedName = qualifyTable({
+    name: referencedConfig.name,
+    schema: referencedConfig.schema,
+  })
+  const targetName = qualifyTable({
+    name: targetConfig.name,
+    schema: targetConfig.schema,
+  })
+  if (referencedName !== targetName) {
+    throw new Error(
+      `fromFk(${column.name}) references "${referencedName}", not "${targetName}"`,
+    )
+  }
+
+  return relationWithSource(source)
 }
 
 export const edge = (
@@ -427,6 +465,43 @@ export const via = <Left, Right>(
   navigation: Relation<Left, Right>,
 ): Relation<Left, Right> => {
   return navigation
+}
+
+/** The TS type of a table's `id` column value, when it has one. */
+type InferIdValue<TTable extends AnyPgTable> = TTable["$inferSelect"] extends {
+  id: infer V
+}
+  ? V
+  : unknown
+
+/**
+ * A table mints an id-typed term. The term's value is the row's primary key
+ * (environments bind bare ids), and the table + key column ride along as a
+ * self-describing term domain — `exists(term)` and candidate filtering
+ * compile with no `termDomains` entry.
+ *
+ * A table cannot BE a term (terms are variables — one rule may need two
+ * distinct team-typed variables), so `idVar` may be called repeatedly:
+ * each call is a distinct variable over the same domain. Pass `label` to
+ * tell them apart in proofs and debuggers.
+ */
+export const idVar = <TTable extends AnyPgTable>(
+  table: TTable,
+  label?: string,
+): Term<InferIdValue<TTable>> => {
+  const tableConfig = getTableConfig(table)
+  const pkColumns = primaryKeyColumns(table)
+  if (pkColumns.length === 0) {
+    throw new Error(`idVar(${tableConfig.name}) requires a primary key`)
+  }
+
+  const keyColumn = selectResourceKey(pkColumns)
+  const variable = term<InferIdValue<TTable>>(label ?? tableConfig.name)
+
+  return attachTermDomain(variable, {
+    table: qualifyTable({ name: tableConfig.name, schema: tableConfig.schema }),
+    valueColumn: keyColumn.name,
+  })
 }
 
 export const drizzleExecutor = (db: {

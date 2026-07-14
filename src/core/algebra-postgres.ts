@@ -18,6 +18,10 @@ import {
   type SourcePredicate,
   type Term,
 } from "./algebra"
+import {
+  attachedRelationSourceEntries,
+  attachedTermDomainEntries,
+} from "./self-describing"
 
 type PostgresSourceFilter = {
   sql: string
@@ -1434,9 +1438,24 @@ const createPlannerState = (
     termEncodings?: ReadonlyArray<PostgresTermEncoding<any>>
   },
 ): PlannerState => {
+  // Explicit mappings win; self-describing relations/terms fill the gaps.
+  const relationMappings = relationMappingsById(options.relationMappings)
+  for (const [relationId, source] of attachedRelationSourceEntries()) {
+    if (!relationMappings.has(relationId)) {
+      relationMappings.set(relationId, source)
+    }
+  }
+
+  const termDomains = termDomainsById(options.termDomains ?? [])
+  for (const [root, domain] of attachedTermDomainEntries()) {
+    if (!termDomains.has(root)) {
+      termDomains.set(root, domain)
+    }
+  }
+
   return {
-    relationMappings: relationMappingsById(options.relationMappings),
-    termDomains: termDomainsById(options.termDomains ?? []),
+    relationMappings,
+    termDomains,
     termAttributeAliases: new Map(),
     termEncodings: termEncodingsById(options.termEncodings ?? []),
     definitions: collectDefinitions(rule),

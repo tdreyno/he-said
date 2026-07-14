@@ -1,5 +1,7 @@
 import { pgTable, primaryKey, text } from "drizzle-orm/pg-core"
-import { attr, relation, term } from ".."
+import { attr, exists, planPostgresRule, relation, term } from ".."
+import { getTermInfo } from "../core/algebra"
+import { attachedTermDomain } from "../core/self-describing"
 import { through } from "../rebac"
 import {
   associatesTable,
@@ -8,6 +10,7 @@ import {
   drizzleResourceType,
   edge,
   fromFk,
+  idVar,
   inColumn,
   rowVar,
   rowVarDomain,
@@ -185,6 +188,79 @@ describe("drizzle bridge", () => {
 
     expect(through(via(branchInSystem))(branch, system)).toEqual(
       through(branchInSystem)(branch, system),
+    )
+  })
+
+  it("idVar mints a pk-typed term with a self-describing domain", () => {
+    const teams = pgTable("teams", { id: text("id").primaryKey() })
+
+    const teamT = idVar(teams)
+    const root = getTermInfo(teamT).root as symbol
+
+    expect(attachedTermDomain(root)).toMatchObject({
+      table: "teams",
+      valueColumn: "id",
+    })
+  })
+
+  it("idVar terms are distinct variables over the same domain", () => {
+    const teams = pgTable("teams", { id: text("id").primaryKey() })
+
+    const teamT = idVar(teams)
+    const memberTeamT = idVar(teams, "memberTeam")
+
+    expect(teamT).not.toBe(memberTeamT)
+    expect(getTermInfo(memberTeamT).root.description).toContain("memberTeam")
+  })
+
+  it("idVar requires a primary key", () => {
+    const notes = pgTable("notes", { body: text("body") })
+
+    expect(() => idVar(notes)).toThrow("idVar(notes) requires a primary key")
+  })
+
+  it("idVar exists() plans with no explicit termDomains", () => {
+    const teams = pgTable("teams_idvar_plan", { id: text("id").primaryKey() })
+    const teamT = idVar(teams)
+
+    const plan = planPostgresRule(exists(teamT), {
+      relationMappings: [],
+      environment: { [teamT]: "team-1" },
+    })
+
+    expect(plan.sql).toContain('"teams_idvar_plan"')
+  })
+
+  it("fromFk(column, target) returns a self-describing relation", () => {
+    const systems = pgTable("systems_fkrel", { id: text("id").primaryKey() })
+    const branches = pgTable("branches_fkrel", {
+      id: text("id").primaryKey(),
+      systemId: text("system_id").references(() => systems.id),
+    })
+
+    const branchInSystem = fromFk(branches.systemId, systems)
+    const branchT = idVar(branches)
+    const systemT = idVar(systems)
+
+    const plan = planPostgresRule(branchInSystem(branchT, systemT), {
+      relationMappings: [],
+      environment: { [branchT]: "branch-1", [systemT]: "sys-1" },
+    })
+
+    expect(plan.sql).toContain('"branches_fkrel"')
+    expect(plan.sql).toContain('"system_id"')
+  })
+
+  it("fromFk(column, target) validates the FK actually references target", () => {
+    const systems = pgTable("systems_fkval", { id: text("id").primaryKey() })
+    const projects = pgTable("projects_fkval", { id: text("id").primaryKey() })
+    const branches = pgTable("branches_fkval", {
+      id: text("id").primaryKey(),
+      systemId: text("system_id").references(() => systems.id),
+    })
+
+    expect(() => fromFk(branches.systemId, projects)).toThrow(
+      'fromFk(system_id) references "systems_fkval", not "projects_fkval"',
     )
   })
 })

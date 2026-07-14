@@ -48,6 +48,13 @@ export {
   planPostgresRule,
 } from "./core/algebra-postgres"
 export { associates, belongsTo } from "./core/algebra-postgres-helpers"
+export {
+  attachRelationSource,
+  attachTermDomain,
+  attachedRelationSource,
+  attachedTermDomain,
+  relationWithSource,
+} from "./core/self-describing"
 export type {
   Environment,
   EvaluationFailingNode,

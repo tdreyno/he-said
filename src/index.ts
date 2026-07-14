@@ -14,6 +14,7 @@ export {
   factIsTrue,
   exists,
   attr,
+  describeAlgebraSymbol,
   relation,
   eq,
   ne,

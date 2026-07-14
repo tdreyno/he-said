@@ -1657,7 +1657,7 @@ describe("postgres algebra adapter", () => {
         },
       }),
     ).toThrow(
-      "postgres adapter exists(term) requires a termDomains mapping for the referenced term",
+      "postgres adapter exists(term) requires a termDomains mapping for",
     )
   })
 

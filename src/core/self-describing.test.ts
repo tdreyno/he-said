@@ -93,4 +93,36 @@ describe("self-describing relations and terms", () => {
       }),
     ).toThrow("missing a relation mapping")
   })
+
+  it("auto-labels self-describing relations from their source", () => {
+    const rel = relationWithSource(
+      belongsTo({ table: "systems", fk: "team_id" }),
+    )
+
+    expect(rel.id.description).toBe("rules.relation.systems.team_id")
+  })
+
+  it("names the relation in missing-mapping errors", () => {
+    const a = term<string>("a")
+    const b = term<string>("b")
+    const named = relation<string, string>(undefined, "systemInTeam")
+
+    expect(() =>
+      planPostgresRule(named(a, b), {
+        relationMappings: [],
+        environment: { [a]: "1", [b]: "2" },
+      }),
+    ).toThrow('missing a relation mapping for "systemInTeam"')
+  })
+
+  it("names the term in missing-domain errors", () => {
+    const teamT = term<string>("team")
+
+    expect(() =>
+      planPostgresRule(exists(teamT), {
+        relationMappings: [],
+        environment: { [teamT]: "t1" },
+      }),
+    ).toThrow('termDomains mapping for "team"')
+  })
 })

@@ -719,10 +719,31 @@ export const attr = <T, K extends keyof T & string>(
   }
 }
 
+/**
+ * Human-readable name for an algebra symbol (term/fact/relation), for error
+ * messages and diagnostics: strips the "rules.<kind>." prefix from labeled
+ * symbols and falls back to the raw description or a placeholder.
+ */
+export const describeAlgebraSymbol = (value: symbol): string => {
+  const description = value.description
+  if (!description) {
+    return "(anonymous)"
+  }
+  const bare = /^rules\.(term|fact|relation)$/.exec(description)
+  if (bare) {
+    return `(unlabeled ${bare[1]!})`
+  }
+  const match = /^rules\.(?:term|fact|relation)\.(.+)$/.exec(description)
+  return match ? match[1]! : description
+}
+
 export const relation = <Left, Right>(
   pairs?: ReadonlyArray<readonly [Left, Right]>,
+  label?: string,
 ): Relation<Left, Right> => {
-  const relationId = Symbol("rules.relation")
+  const relationId = Symbol(
+    label ? `rules.relation.${label}` : "rules.relation",
+  )
 
   const relationFn = ((
     left: Term<Left>,

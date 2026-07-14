@@ -1,5 +1,6 @@
 import {
   type AttributeAccessor,
+  describeAlgebraSymbol,
   type Environment,
   type EvaluationFailingNode,
   type EvaluationProof,
@@ -629,7 +630,7 @@ const compileTermExistenceSql = (
   const explicitDomain = state.termDomains.get(term)
   if (!explicitDomain) {
     throw new Error(
-      "postgres adapter exists(term) requires a termDomains mapping for the referenced term",
+      `postgres adapter exists(term) requires a termDomains mapping for "${describeAlgebraSymbol(term)}"`,
     )
   }
 
@@ -665,7 +666,9 @@ const appendRelation = (
 ): QueryBuilder => {
   const source = state.relationMappings.get(rule.relationId)
   if (!source) {
-    throw new Error("postgres adapter is missing a relation mapping")
+    throw new Error(
+      `postgres adapter is missing a relation mapping for "${describeAlgebraSymbol(rule.relationId)}"`,
+    )
   }
 
   const alias = nextAlias(state, "rel")
@@ -856,7 +859,7 @@ const resolveOperandSql = (
   const attributeDomain = state.termDomains.get(termRoot)
   if (!attributeDomain) {
     throw new Error(
-      "postgres adapter is missing a termDomains mapping for an attr(...) predicate term",
+      `postgres adapter is missing a termDomains mapping for attr(...) on "${describeAlgebraSymbol(termRoot as symbol)}"`,
     )
   }
 
@@ -1063,7 +1066,9 @@ const collectRelationTermSources = (
       case "relation": {
         const source = state.relationMappings.get(node.relationId)
         if (!source) {
-          throw new Error("postgres adapter is missing a relation mapping")
+          throw new Error(
+            `postgres adapter is missing a relation mapping for "${describeAlgebraSymbol(node.relationId)}"`,
+          )
         }
         if (source.kind === "prepared") {
           return

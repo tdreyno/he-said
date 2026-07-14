@@ -76,9 +76,18 @@ export const attachedTermDomainEntries = (): IterableIterator<
 /**
  * Declare a relation AND its Postgres source in one step. The source rides
  * with the relation, so adapters need no `relationMappings` entry for it.
+ * Unless overridden, the relation is labeled from its source
+ * (`table.rightColumn`) so errors, proofs, and diagrams can name it.
  */
 export const relationWithSource = <Left = unknown, Right = unknown>(
   source: PostgresRelationSource,
+  label?: string,
 ): Relation<Left, Right> => {
-  return attachRelationSource(relation<Left, Right>(), source)
+  return attachRelationSource(
+    relation<Left, Right>(
+      undefined,
+      label ?? `${source.table}.${source.rightColumn}`,
+    ),
+    source,
+  )
 }

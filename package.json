@@ -41,10 +41,18 @@
     "./drizzle": {
       "types": "./dist/drizzle/index.d.ts",
       "default": "./dist/drizzle/index.js"
+    },
+    "./mermaid": {
+      "types": "./dist/mermaid/index.d.ts",
+      "default": "./dist/mermaid/index.js"
     }
   },
+  "bin": {
+    "he-said-mermaid": "bin/he-said-mermaid.mjs"
+  },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "clean": "rm -rf dist",

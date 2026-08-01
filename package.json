@@ -91,7 +91,7 @@
     "@typescript-eslint/parser": "^8.46.4",
     "@types/jest": "^29.5.13",
     "@types/pg": "^8.15.5",
-    "eslint": "^9.39.1",
+    "eslint": "^10.8.0",
     "drizzle-orm": "^0.44.2",
     "husky": "^9.1.7",
     "jest": "^29.7.0",
